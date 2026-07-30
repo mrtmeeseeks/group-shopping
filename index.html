@@ -851,9 +851,12 @@
   }
   function renderPresence() {
     var el = document.getElementById("presenceRow");
-    if (viewers.length < 2) { el.hidden = true; return; }
+    if (!viewers.length) { el.hidden = true; return; }
     el.hidden = false;
-    el.textContent = "👀 looking now: " + viewers.join(", ");
+    var mine = myDisplayName();
+    var names = viewers.map(function (n) { return n === mine ? "you" : n; });
+    names.sort(function (a, b) { return a === "you" ? -1 : b === "you" ? 1 : 0; });
+    el.textContent = "👀 looking now: " + names.join(", ");
   }
 
   // ── tabs ──
