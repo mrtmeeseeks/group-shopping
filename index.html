@@ -100,6 +100,18 @@
     background: var(--pending-soft); color: var(--pending);
   }
   .live.on { background: var(--credit-soft); color: var(--credit); }
+  .presence-wrap { position: relative; }
+  #presenceBadge { border: none; cursor: pointer; font: inherit; font-size: 0.72rem; font-weight: 700; }
+  .presence-pop {
+    display: none;
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 12px; min-width: 140px; box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    font-size: 0.82rem; color: var(--ink); white-space: nowrap;
+  }
+  .presence-pop div { padding: 2px 0; }
+  .presence-wrap.open .presence-pop { display: block; }
+  @media (hover: hover) { .presence-wrap:hover .presence-pop { display: block; } }
   .currency-pick {
     font-size: 0.8rem;
     background: none; border: 1px solid var(--line); border-radius: 7px;
@@ -428,6 +440,10 @@
   <header>
     <h1><span class="tick">✓</span> Group Shopping</h1>
     <div class="head-right">
+      <span class="presence-wrap" id="presenceWrap" hidden>
+        <button class="live on" id="presenceBadge" type="button" aria-label="Who's looking now">👀</button>
+        <div class="presence-pop" id="presencePop"></div>
+      </span>
       <span class="live" id="liveBadge">connecting…</span>
       <select class="currency-pick" id="meSel" aria-label="Who are you"></select>
       <select class="currency-pick" id="currencySel" aria-label="Currency">
@@ -445,7 +461,6 @@
     <div class="stat"><div class="label" id="statDayLabel">This day</div><div class="value pending-c money" id="statDay">—</div></div>
     <div class="stat"><div class="label">Per person</div><div class="value money" id="statShare">—</div></div>
   </div>
-  <div class="note" id="presenceRow" style="margin:0 2px 10px;" hidden></div>
 
   <section id="tab-list">
     <div class="day-strip" id="dayStrip"></div>
@@ -850,14 +865,24 @@
     if (rtOn) chan.track({ n: myDisplayName() });
   }
   function renderPresence() {
-    var el = document.getElementById("presenceRow");
-    if (!viewers.length) { el.hidden = true; return; }
-    el.hidden = false;
+    var wrap = document.getElementById("presenceWrap");
+    var badge = document.getElementById("presenceBadge");
+    var pop = document.getElementById("presencePop");
+    if (!viewers.length) { wrap.hidden = true; return; }
+    wrap.hidden = false;
     var mine = myDisplayName();
     var names = viewers.map(function (n) { return n === mine ? "you" : n; });
     names.sort(function (a, b) { return a === "you" ? -1 : b === "you" ? 1 : 0; });
-    el.textContent = "👀 looking now: " + names.join(", ");
+    badge.textContent = "👀 " + viewers.length;
+    pop.innerHTML = names.map(function (n) { return "<div>" + esc(n) + "</div>"; }).join("");
   }
+  document.getElementById("presenceBadge").addEventListener("click", function (e) {
+    e.stopPropagation();
+    document.getElementById("presenceWrap").classList.toggle("open");
+  });
+  document.addEventListener("click", function () {
+    document.getElementById("presenceWrap").classList.remove("open");
+  });
 
   // ── tabs ──
   var tabBtns = document.querySelectorAll(".tabs button");
