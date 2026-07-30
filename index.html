@@ -200,6 +200,13 @@
     font-family: "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
     margin: 0 0 4px; font-size: 1.05rem;
   }
+  .sheet-head {
+    position: sticky; top: -18px; z-index: 2;
+    background: var(--ground);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin: -18px -4px 4px; padding: 18px 4px 6px;
+  }
+  .sheet-head h3 { margin: 0; }
   .sheet .items-note { font-size: 0.8rem; color: var(--ink-soft); margin: 0 0 14px; }
   .co-items { display: flex; flex-direction: column; gap: 6px; }
   .co-item {
@@ -445,7 +452,10 @@
 
 <div class="sheet-back" id="sheetBack" hidden>
   <form class="sheet" id="checkoutForm">
-    <h3 id="coTitle">Check out this run</h3>
+    <div class="sheet-head">
+      <h3 id="coTitle">Check out this run</h3>
+      <button type="button" class="icon-btn danger" id="coClose" aria-label="Close" style="font-size:1.25rem;">✕</button>
+    </div>
     <p class="items-note">Everything is shared by default. If something was for specific people (cigarettes, a bottle for two…), select them and enter its price — it splits equally among just them instead of the whole group.</p>
     <div class="field">
       <label>Items in this run</label>
@@ -966,8 +976,12 @@
   }
   function closeCheckout() { sheetBack.hidden = true; checkoutDraftId = null; }
   document.getElementById("coCancel").addEventListener("click", closeCheckout);
+  document.getElementById("coClose").addEventListener("click", closeCheckout);
   sheetBack.addEventListener("click", function (e) {
     if (e.target === sheetBack) closeCheckout();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !sheetBack.hidden) closeCheckout();
   });
 
   receiptDrop.addEventListener("click", function () { receiptInput.click(); });
