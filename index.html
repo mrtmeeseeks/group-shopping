@@ -210,18 +210,13 @@
   .co-main { display: flex; align-items: center; gap: 8px; }
   .co-item .nm { flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 600; overflow-wrap: anywhere; }
   .co-item input { width: 88px; padding: 6px 8px; }
-  .co-people { display: flex; flex-wrap: wrap; gap: 6px; }
-  .p-chip {
-    font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer;
-    background: none; color: var(--ink-soft);
-    border: 1px solid var(--line); border-radius: 99px; padding: 3px 9px;
-  }
-  .p-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .sheet .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
   .sheet .field label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); font-weight: 600; }
   .sheet .row { display: flex; gap: 8px; }
   .sheet .row > * { flex: 1; min-width: 0; }
   .sheet .field input, .sheet .field select { width: 100%; }
+  .sheet .co-item input { width: 96px; flex: none; }
+  .sheet .co-item select { width: 42%; flex: none; font-size: 0.85rem; }
   .receipt-drop {
     border: 1px dashed var(--line); border-radius: var(--radius);
     padding: 12px; text-align: center; color: var(--ink-soft); font-size: 0.85rem;
@@ -434,7 +429,7 @@
 <div class="sheet-back" id="sheetBack" hidden>
   <form class="sheet" id="checkoutForm">
     <h3 id="coTitle">Check out this run</h3>
-    <p class="items-note">Everything is shared by default. If something was for one person only (cigarettes, meds…), pick them and enter its price — that part won't be split with the group.</p>
+    <p class="items-note">Everything is shared by default. If something was for specific people (cigarettes, a bottle for two…), select them and enter its price — it splits equally among just them instead of the whole group.</p>
     <div class="field">
       <label>Items in this run</label>
       <div id="coItemRows" class="co-items"></div>
@@ -860,59 +855,44 @@
     links.forEach(function (l) {
       var it = items.find(function (x) { return x.id === l.item_id; });
       if (!it) return;
-      var selected = {};
-      linkPeople(l).forEach(function (pid) { selected[pid] = true; });
+      var pre = {};
+      linkPeople(l).forEach(function (pid) { pre[pid] = true; });
 
       var row = document.createElement("div");
       row.className = "co-item";
       row.dataset.itemId = it.id;
-      row._selected = selected;
 
       var main = document.createElement("div");
       main.className = "co-main";
       var nm = document.createElement("span");
       nm.className = "nm";
       nm.textContent = it.name + ((l.qty || 1) > 1 ? " ×" + l.qty : "");
-      var who = document.createElement("button");
-      who.type = "button";
-      who.className = "btn ghost small";
+
+      var msel = document.createElement("select");
+      msel.multiple = true;
+      msel.size = 1;
+      msel.setAttribute("aria-label", "Personal for — splits equally among selected");
+      people.forEach(function (p) {
+        var o = document.createElement("option");
+        o.value = p.id; o.textContent = p.name;
+        if (pre[p.id]) o.selected = true;
+        msel.appendChild(o);
+      });
+
       var amt = document.createElement("input");
       amt.type = "number"; amt.step = "0.01"; amt.min = "0";
       amt.placeholder = "price";
       if (l.amount) amt.value = Number(l.amount).toFixed(2);
-      main.appendChild(nm); main.appendChild(who); main.appendChild(amt);
-
-      var pp = document.createElement("div");
-      pp.className = "co-people";
-      pp.hidden = true;
-      people.forEach(function (p) {
-        var pc = document.createElement("button");
-        pc.type = "button";
-        pc.className = "p-chip" + (selected[p.id] ? " on" : "");
-        pc.textContent = p.name;
-        pc.addEventListener("click", function () {
-          if (selected[p.id]) delete selected[p.id]; else selected[p.id] = true;
-          pc.classList.toggle("on", !!selected[p.id]);
-          refresh();
-        });
-        pp.appendChild(pc);
-      });
 
       function refresh() {
-        var n = Object.keys(selected).length;
-        var names = Object.keys(selected).map(personName);
-        who.textContent = n
-          ? "For: " + (names.length > 2 ? names.slice(0, 2).join(", ") + " +" + (names.length - 2) : names.join(" + "))
-          : "Shared ▾";
-        amt.hidden = !n;
+        amt.hidden = !msel.selectedOptions.length;
       }
+      msel.addEventListener("change", refresh);
       refresh();
-      who.addEventListener("click", function () {
-        pp.hidden = !pp.hidden;
-      });
 
+      row._msel = msel;
+      main.appendChild(nm); main.appendChild(msel); main.appendChild(amt);
       row.appendChild(main);
-      row.appendChild(pp);
       rowsEl.appendChild(row);
     });
     var sel = document.getElementById("coPayer");
@@ -990,7 +970,9 @@
     var assign = {};
     var badPersonal = false, personalSum = 0;
     document.querySelectorAll("#coItemRows .co-item").forEach(function (row) {
-      var pids = Object.keys(row._selected || {});
+      var pids = row._msel
+        ? Array.prototype.map.call(row._msel.selectedOptions, function (o) { return o.value; })
+        : [];
       if (!pids.length) { assign[row.dataset.itemId] = { for_people: null, amount: null }; return; }
       var v = parseFloat(row.querySelector("input").value);
       if (isNaN(v) || v <= 0) { badPersonal = true; return; }
