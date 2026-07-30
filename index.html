@@ -400,11 +400,19 @@
   }
   .icon-btn.danger:hover { color: var(--debit); }
   .icon-btn.edit:hover { color: var(--accent); }
-  .armed, .icon-btn.armed, .btn.armed {
-    color: var(--debit) !important;
-    border-color: var(--debit) !important;
-    font-weight: 700;
+  .confirm-back {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 60;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
   }
+  .confirm-box {
+    background: var(--ground); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 16px; width: min(360px, 100%);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  }
+  .confirm-box p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
+  .confirm-box .actions { display: flex; gap: 8px; }
+  .confirm-box .btn { flex: 1; padding: 11px; }
+  .btn.danger { background: var(--debit); color: #fff; }
 
   .viewer {
     position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
@@ -549,6 +557,16 @@
 
 <div class="viewer" id="viewer" hidden><img id="viewerImg" alt="Receipt"></div>
 
+<div class="confirm-back" id="confirmBack" hidden>
+  <div class="confirm-box" role="alertdialog" aria-labelledby="confirmMsg">
+    <p id="confirmMsg"></p>
+    <div class="actions">
+      <button class="btn ghost" id="confirmNo" type="button">Cancel</button>
+      <button class="btn danger" id="confirmYes" type="button">Delete</button>
+    </div>
+  </div>
+</div>
+
 <nav class="tabs" aria-label="Sections" id="tabBar" hidden>
   <button data-tab="list" class="active"><span class="icon" aria-hidden="true">🛒</span>List</button>
   <button data-tab="people"><span class="icon" aria-hidden="true">👥</span>People</button>
@@ -658,25 +676,21 @@
     console.error(what, err);
     toast(what + " failed: " + (err && err.message ? err.message : "network error"));
   }
-  // two-tap confirm: first tap arms the button (red, relabeled), second tap within 2.5s fires
-  function armConfirm(btn, armedLabel, fn) {
+  // confirmation popup for destructive actions
+  var confirmFn = null;
+  function askConfirm(message, fn) {
+    confirmFn = fn;
+    document.getElementById("confirmMsg").textContent = message;
+    document.getElementById("confirmBack").hidden = false;
+  }
+  function closeConfirm() {
+    document.getElementById("confirmBack").hidden = true;
+    confirmFn = null;
+  }
+  function armConfirm(btn, message, fn) {
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
-      if (btn.dataset.armed === "1") {
-        btn.dataset.armed = "";
-        fn();
-        return;
-      }
-      btn.dataset.armed = "1";
-      var prev = btn.textContent;
-      btn.textContent = armedLabel;
-      btn.classList.add("armed");
-      setTimeout(function () {
-        if (btn.dataset.armed !== "1") return;
-        btn.dataset.armed = "";
-        btn.textContent = prev;
-        btn.classList.remove("armed");
-      }, 2500);
+      askConfirm(message, fn);
     });
   }
   function personName(id) {
@@ -1269,7 +1283,18 @@
     if (e.target === sheetBack) closeCheckout();
   });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !sheetBack.hidden) closeCheckout();
+    if (e.key !== "Escape") return;
+    if (!document.getElementById("confirmBack").hidden) closeConfirm();
+    else if (!sheetBack.hidden) closeCheckout();
+  });
+  document.getElementById("confirmYes").addEventListener("click", function () {
+    var f = confirmFn;
+    closeConfirm();
+    if (f) f();
+  });
+  document.getElementById("confirmNo").addEventListener("click", closeConfirm);
+  document.getElementById("confirmBack").addEventListener("click", function (e) {
+    if (e.target === e.currentTarget) closeConfirm();
   });
 
   receiptDrop.addEventListener("click", function () { receiptInput.click(); });
@@ -1696,7 +1721,7 @@
         rowsBox.appendChild(row);
       });
       c.querySelector('[data-act="go"]').addEventListener("click", function () { openCheckout(t); });
-      armConfirm(c.querySelector('[data-act="discard"]'), "Tap again to discard", function () { discardDraft(t); });
+      armConfirm(c.querySelector('[data-act="discard"]'), "Discard this run card? The items just go back to the pool.", function () { discardDraft(t); });
       var useBtn = c.querySelector('[data-act="use"]');
       if (useBtn) useBtn.addEventListener("click", function () {
         activeDraftId = t.id;
@@ -1771,7 +1796,7 @@
           viewer.hidden = false;
         });
       }
-      armConfirm(d.querySelector('[data-act="del"]'), "Tap again to delete", function () { deleteTrip(t); });
+      armConfirm(d.querySelector('[data-act="del"]'), "Delete this run (" + fmt(Number(t.total || 0)) + " by " + personName(t.payer) + ")? Its spending is removed from the balances.", function () { deleteTrip(t); });
       d.querySelector('[data-act="edit"]').addEventListener("click", function () {
         if (names.length) openCheckout(t); else openExpense(t);
       });
@@ -1846,7 +1871,7 @@
         d.appendChild(inp); d.appendChild(ok); d.appendChild(no);
         inp.focus(); inp.select();
       });
-      armConfirm(d.querySelector('[data-act="del"]'), "sure?", function () {
+      armConfirm(d.querySelector('[data-act="del"]'), 'Remove "' + i.name + '" from the list?', function () {
         if (runItems.some(function (l) { return l.item_id === i.id; })) {
           toast("Used in a run — can't remove (edit it instead)"); return;
         }
@@ -1966,7 +1991,7 @@
           '<span class="pname">' + esc(personName(p.from_person)) + " → " + esc(personName(p.to_person)) + '</span>' +
           '<span class="money">' + fmt(Number(p.amount)) + '</span>' +
           '<button class="icon-btn danger" data-act="del" aria-label="Remove payment">✕</button>';
-        armConfirm(d.querySelector('[data-act="del"]'), "sure?", function () {
+        armConfirm(d.querySelector('[data-act="del"]'), "Remove this recorded payment (" + personName(p.from_person) + " → " + personName(p.to_person) + " " + fmt(Number(p.amount)) + ")?", function () {
           payments = payments.filter(function (x) { return x.id !== p.id; });
           render();
           if (isTmp(p.id)) return;
