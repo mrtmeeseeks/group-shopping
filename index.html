@@ -203,6 +203,15 @@
     margin: 0 0 4px; font-size: 1.05rem;
   }
   .sheet .items-note { font-size: 0.8rem; color: var(--ink-soft); margin: 0 0 14px; }
+  .co-items { display: flex; flex-direction: column; gap: 6px; }
+  .co-item {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 8px;
+  }
+  .co-item .nm { flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 600; overflow-wrap: anywhere; }
+  .co-item select { padding: 6px 6px; max-width: 42%; }
+  .co-item input { width: 88px; padding: 6px 8px; }
   .sheet .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
   .sheet .field label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); font-weight: 600; }
   .sheet .row { display: flex; gap: 8px; }
@@ -382,7 +391,7 @@
 
   <section id="tab-balances" hidden>
     <h2>Who's ahead, who owes</h2>
-    <p class="note">Each shopping run is split equally across everyone. Positive = paid more than their share.</p>
+    <p class="note">Shared costs split equally across everyone; items marked personal in a run are charged to that person only. Positive = paid more than they owe.</p>
     <div class="card-list" id="balanceList"></div>
     <h2>Settle up</h2>
     <div class="card-list" id="settleList"></div>
@@ -398,7 +407,11 @@
 <div class="sheet-back" id="sheetBack" hidden>
   <form class="sheet" id="checkoutForm">
     <h3 id="coTitle">Log this shopping run</h3>
-    <p class="items-note" id="coItems"></p>
+    <p class="items-note">Everything is shared by default. If something was for one person only (cigarettes, meds…), pick them and enter its price — that part won't be split with the group.</p>
+    <div class="field">
+      <label>Items in this run</label>
+      <div id="coItemRows" class="co-items"></div>
+    </div>
     <div class="row">
       <div class="field">
         <label for="coPayer">Who paid</label>
@@ -659,13 +672,38 @@
   function openCheckout() {
     var ids = cartIds();
     if (!ids.length) return;
-    var names = ids.map(function (id) {
-      var it = items.find(function (x) { return x.id === id; });
-      return it ? it.name : "";
-    }).filter(Boolean);
     document.getElementById("coTitle").textContent = "Log run · " + dayLabel(selectedDay);
-    document.getElementById("coItems").textContent =
-      names.length + " item" + (names.length === 1 ? "" : "s") + ": " + names.join(", ");
+    var rowsEl = document.getElementById("coItemRows");
+    rowsEl.innerHTML = "";
+    ids.forEach(function (id) {
+      var it = items.find(function (x) { return x.id === id; });
+      if (!it) return;
+      var row = document.createElement("div");
+      row.className = "co-item";
+      row.dataset.itemId = id;
+      var nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = it.name;
+      var psel = document.createElement("select");
+      psel.setAttribute("aria-label", "Personal for");
+      var o0 = document.createElement("option");
+      o0.value = ""; o0.textContent = "Shared";
+      psel.appendChild(o0);
+      people.forEach(function (p) {
+        var o = document.createElement("option");
+        o.value = p.id; o.textContent = p.name;
+        psel.appendChild(o);
+      });
+      var amt = document.createElement("input");
+      amt.type = "number"; amt.step = "0.01"; amt.min = "0";
+      amt.placeholder = "price"; amt.hidden = true;
+      psel.addEventListener("change", function () {
+        amt.hidden = !psel.value;
+        if (psel.value) amt.focus();
+      });
+      row.appendChild(nm); row.appendChild(psel); row.appendChild(amt);
+      rowsEl.appendChild(row);
+    });
     var sel = document.getElementById("coPayer");
     sel.innerHTML = "";
     people.forEach(function (p) {
@@ -725,9 +763,23 @@
     var total = parseFloat(document.getElementById("coTotal").value);
     if (!payer || isNaN(total)) { toast("Payer and total are required"); return; }
     var note = document.getElementById("coNote").value.trim();
-    var ids = cartIds().filter(function (id) { return !isTmp(id); });
     var receiptBlob = pendingReceiptBlob;
     var receiptPreview = pendingReceiptPreview;
+
+    // collect per-item personal assignments from the sheet
+    var assign = {}; // item_id -> {for_person, amount}
+    var badPersonal = false, personalSum = 0;
+    document.querySelectorAll("#coItemRows .co-item").forEach(function (row) {
+      var pid = row.querySelector("select").value;
+      if (!pid) return;
+      var v = parseFloat(row.querySelector("input").value);
+      if (isNaN(v) || v <= 0) { badPersonal = true; return; }
+      assign[row.dataset.itemId] = { for_person: pid, amount: v };
+      personalSum += v;
+    });
+    if (badPersonal) { toast("Enter the price for each personal item"); return; }
+    if (personalSum > total + 0.005) { toast("Personal amounts exceed the receipt total"); return; }
+    var ids = cartIds().filter(function (id) { return !isTmp(id); });
 
     // instant: show the run + link its items locally, sync behind the scenes
     var tmpTrip = {
@@ -736,7 +788,8 @@
     };
     trips.unshift(tmpTrip);
     cartIds().forEach(function (id) {
-      runItems.push({ trip_id: tmpTrip.id, item_id: id });
+      var a = assign[id] || {};
+      runItems.push({ trip_id: tmpTrip.id, item_id: id, for_person: a.for_person || null, amount: a.amount || null });
     });
     cart = {};
     closeCheckout();
@@ -762,7 +815,10 @@
     }).then(function (r) {
       if (r.error) throw r.error;
       if (!ids.length) { loadAll(); return; }
-      var links = ids.map(function (id) { return { trip_id: r.data.id, item_id: id }; });
+      var links = ids.map(function (id) {
+        var a = assign[id] || {};
+        return { trip_id: r.data.id, item_id: id, for_person: a.for_person || null, amount: a.amount || null };
+      });
       return Promise.resolve(sb.from("run_items").insert(links)).then(function (r2) {
         if (r2.error) throw r2.error;
         loadAll();
@@ -796,16 +852,32 @@
   function dayTrips(day) {
     return trips.filter(function (t) { return t.day === day; });
   }
+  function personalByTrip() {
+    var m = {};
+    runItems.forEach(function (l) {
+      if (l.for_person && l.amount) m[l.trip_id] = (m[l.trip_id] || 0) + Number(l.amount);
+    });
+    return m;
+  }
+  function commonTotal() {
+    var pbt = personalByTrip();
+    return trips.reduce(function (s, t) {
+      return s + Math.max(0, Number(t.total) - (pbt[t.id] || 0));
+    }, 0);
+  }
   function balances() {
     var map = {};
-    people.forEach(function (p) { map[p.id] = { person: p, paid: 0, balance: 0 }; });
+    people.forEach(function (p) { map[p.id] = { person: p, paid: 0, personal: 0, balance: 0 }; });
     if (!people.length) return map;
-    var share = totalSpent() / people.length;
+    var share = commonTotal() / people.length;
     trips.forEach(function (t) {
       if (map[t.payer]) map[t.payer].paid += Number(t.total);
     });
+    runItems.forEach(function (l) {
+      if (l.for_person && l.amount && map[l.for_person]) map[l.for_person].personal += Number(l.amount);
+    });
     Object.keys(map).forEach(function (id) {
-      map[id].balance = map[id].paid - share;
+      map[id].balance = map[id].paid - share - map[id].personal;
     });
     return map;
   }
@@ -839,7 +911,7 @@
     document.getElementById("statDayLabel").textContent = dayLabel(selectedDay);
     document.getElementById("statDay").textContent =
       fmt(daySpent) + (dt.length ? " · " + dt.length + " run" + (dt.length === 1 ? "" : "s") : "");
-    document.getElementById("statShare").textContent = people.length ? fmt(totalSpent() / people.length) : "—";
+    document.getElementById("statShare").textContent = people.length ? fmt(commonTotal() / people.length) : "—";
     document.getElementById("itemCount").textContent = "(" + items.length + ")";
     document.getElementById("peopleCount").textContent = "(" + people.length + ")";
 
@@ -1010,7 +1082,11 @@
       var names = runItems.filter(function (l) { return l.trip_id === t.id; })
         .map(function (l) {
           var it = items.find(function (x) { return x.id === l.item_id; });
-          return it ? it.name : null;
+          if (!it) return null;
+          if (l.for_person && l.amount) {
+            return it.name + " (" + personName(l.for_person) + " " + fmt(Number(l.amount)) + ")";
+          }
+          return it.name;
         }).filter(Boolean);
       var d = document.createElement("div");
       d.className = "trip";
@@ -1085,7 +1161,8 @@
       d.innerHTML =
         '<span class="avatar">' + esc(initials(p.name)) + '</span>' +
         '<span class="pname">' + esc(p.name) + '</span>' +
-        '<span class="spent money">paid ' + fmt(bal[p.id] ? bal[p.id].paid : 0) + '</span>' +
+        '<span class="spent money">paid ' + fmt(bal[p.id] ? bal[p.id].paid : 0) +
+          (bal[p.id] && bal[p.id].personal > 0 ? " · own " + fmt(bal[p.id].personal) : "") + '</span>' +
         '<button class="icon-btn danger" data-act="del" aria-label="Remove person">✕</button>';
       d.querySelector('[data-act="del"]').addEventListener("click", function () {
         if (trips.some(function (t) { return t.payer === p.id; })) {
@@ -1149,14 +1226,19 @@
 
   // ── CSV export ──
   document.getElementById("exportCsv").addEventListener("click", function () {
-    var rows = [["day", "payer", "total", "note", "items", "receipt"]];
+    var rows = [["day", "payer", "total", "note", "items", "personal", "receipt"]];
     trips.slice().sort(function (a, b) { return String(a.day).localeCompare(String(b.day)); }).forEach(function (t) {
-      var names = runItems.filter(function (l) { return l.trip_id === t.id; })
+      var links = runItems.filter(function (l) { return l.trip_id === t.id; });
+      var names = links.map(function (l) {
+        var it = items.find(function (x) { return x.id === l.item_id; });
+        return it ? it.name : null;
+      }).filter(Boolean).join("; ");
+      var personal = links.filter(function (l) { return l.for_person && l.amount; })
         .map(function (l) {
           var it = items.find(function (x) { return x.id === l.item_id; });
-          return it ? it.name : null;
-        }).filter(Boolean).join("; ");
-      rows.push([t.day, personName(t.payer), Number(t.total).toFixed(2), t.note || "", names, t.receipt_url || ""]);
+          return (it ? it.name : "?") + "=" + personName(l.for_person) + ":" + Number(l.amount).toFixed(2);
+        }).join("; ");
+      rows.push([t.day, personName(t.payer), Number(t.total).toFixed(2), t.note || "", names, personal, t.receipt_url || ""]);
     });
     var csv = rows.map(function (r) {
       return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(",");
