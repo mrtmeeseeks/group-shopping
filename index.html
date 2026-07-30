@@ -689,7 +689,7 @@
     if (!src) return;
     var existing = {};
     items.forEach(function (i) {
-      if (i.day === selectedDay) existing[i.name.toLowerCase()] = true;
+      if (i.day === selectedDay && i.status === "open") existing[i.name.toLowerCase()] = true;
     });
     var toAdd = [];
     items.filter(function (i) { return i.day === src; }).forEach(function (i) {
@@ -984,7 +984,14 @@
       d.innerHTML =
         '<span class="chip bought">✓</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
-        '<span class="meta">' + (t ? esc(personName(t.payer)) + (t.note ? " · " + esc(t.note) : "") : "") + '</span>';
+        '<span class="meta">' + (t ? esc(personName(t.payer)) + (t.note ? " · " + esc(t.note) : "") : "") + '</span>' +
+        '<button class="btn small ghost" data-act="again" type="button">Buy again</button>';
+      d.querySelector('[data-act="again"]').addEventListener("click", function () {
+        sb.from("items").insert({ name: i.name, day: selectedDay, status: "open" }).then(function (r) {
+          if (r.error) fail(r.error, "Re-adding item");
+          else { toast('"' + i.name + '" is back on the list'); loadAll(); }
+        });
+      });
       el.appendChild(d);
     });
   }
