@@ -1850,20 +1850,7 @@
         '<span class="avatar">' + esc(initials(p.name)) + '</span>' +
         '<span class="pname">' + esc(p.name) + '</span>' +
         '<span class="spent money">paid ' + fmt(bal[p.id] ? bal[p.id].paid : 0) +
-          (bal[p.id] && bal[p.id].personal > 0 ? " · own " + fmt(bal[p.id].personal) : "") + '</span>' +
-        '<button class="icon-btn danger" data-act="del" aria-label="Remove person">✕</button>';
-      d.querySelector('[data-act="del"]').addEventListener("click", function () {
-        if (trips.some(function (t) { return t.payer === p.id; }) ||
-            runItems.some(function (l) { return linkPeople(l).indexOf(p.id) !== -1; })) {
-          toast("Used in runs — can't remove"); return;
-        }
-        people = people.filter(function (x) { return x.id !== p.id; });
-        render();
-        if (isTmp(p.id)) return;
-        track(sb.from("people").delete().eq("id", p.id)).then(function (r) {
-          if (r.error) { fail(r.error, "Removing person"); loadAll(); }
-        });
-      });
+          (bal[p.id] && bal[p.id].personal > 0 ? " · own " + fmt(bal[p.id].personal) : "") + '</span>';
       el.appendChild(d);
     });
   }
