@@ -53,11 +53,16 @@
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   [hidden] { display: none !important; }
-  html, body {
-    margin: 0; padding: 0; overflow-x: hidden;
+  html {
+    overflow-x: clip;               /* clip, not hidden: hidden turns body into a scroll
+                                       container and overscroll-behavior then eats wheel events */
     overscroll-behavior-y: none;
+  }
+  html, body {
+    margin: 0; padding: 0;
     -webkit-text-size-adjust: 100%;
   }
+  body { overflow-x: clip; }
   img { max-width: 100%; }
   button, .item, .run-row, .day-chip, .pp-row { touch-action: manipulation; }
   body {
