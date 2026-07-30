@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Group Shopping</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --ground: #F4F6F1;
+    --card: #FDFEFC;
+    --ink: #1E2721;
+    --ink-soft: #5A6660;
+    --line: #DCE2DB;
+    --accent: #2C7A4B;
+    --accent-ink: #FFFFFF;
+    --accent-soft: #E3EFE7;
+    --pending: #A97B1F;
+    --pending-soft: #F5EDDA;
+    --debit: #B3512F;
+    --credit: #2C7A4B;
+    --credit-soft: #E3EFE7;
+    --shadow: 0 1px 3px rgba(30, 39, 33, 0.08);
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #141915;
+      --card: #1C231E;
+      --ink: #E6ECE7;
+      --ink-soft: #93A098;
+      --line: #2C352E;
+      --accent: #5FBE8C;
+      --accent-ink: #101712;
+      --accent-soft: #22352A;
+      --pending: #D4A94E;
+      --pending-soft: #33301F;
+      --debit: #D98A6A;
+      --credit: #5FBE8C;
+      --credit-soft: #22352A;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  .money, .num {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wrap { max-width: 680px; margin: 0 auto; padding: 0 14px 130px; }
+
+  header { padding: 22px 2px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  header h1 {
+    font-family: "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
+    font-size: 1.35rem; font-weight: 700; letter-spacing: 0.01em;
+    margin: 0; text-wrap: balance;
+  }
+  header h1 .tick { color: var(--accent); }
+  .head-right { display: flex; align-items: center; gap: 8px; }
+  .live {
+    font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+    padding: 3px 9px; border-radius: 99px;
+    background: var(--pending-soft); color: var(--pending);
+  }
+  .live.on { background: var(--credit-soft); color: var(--credit); }
+  .currency-pick {
+    font-size: 0.8rem;
+    background: none; border: 1px solid var(--line); border-radius: 7px;
+    padding: 4px 8px; color: var(--ink); cursor: pointer;
+  }
+
+  .day-strip { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 12px; }
+  .day-chip {
+    flex-shrink: 0; font: inherit; font-size: 0.78rem; font-weight: 600;
+    background: var(--card); color: var(--ink-soft);
+    border: 1px solid var(--line); border-radius: 99px;
+    padding: 5px 12px; cursor: pointer;
+  }
+  .day-chip.today { border-color: var(--accent); }
+  .day-chip.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 10px 12px; box-shadow: var(--shadow);
+  }
+  .stat .label {
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--ink-soft); margin-bottom: 3px;
+  }
+  .stat .value { font-size: 1.15rem; font-weight: 700; }
+  .stat .value.pending-c { color: var(--pending); }
+
+  .tabs {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--card); border-top: 1px solid var(--line);
+    display: flex; justify-content: center;
+    padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+    z-index: 10;
+  }
+  .tabs button {
+    flex: 1; max-width: 160px;
+    background: none; border: none; cursor: pointer;
+    font: inherit; font-size: 0.78rem; font-weight: 600;
+    color: var(--ink-soft); padding: 8px 4px 6px; border-radius: 8px;
+  }
+  .tabs button .icon { display: block; font-size: 1.05rem; margin-bottom: 1px; }
+  .tabs button.active { color: var(--accent); background: var(--accent-soft); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  section[hidden] { display: none; }
+  h2 {
+    font-family: "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
+    font-size: 0.95rem; font-weight: 700; letter-spacing: 0.02em;
+    margin: 20px 2px 10px;
+  }
+  h2 .count { color: var(--ink-soft); font-weight: 500; font-size: 0.8rem; }
+
+  .add-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  input, select {
+    font: inherit; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 10px; min-width: 0;
+  }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .add-row input[type="text"] { flex: 1; }
+  .btn {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border: none; border-radius: 8px; padding: 9px 14px;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  .btn.ghost { background: none; border: 1px solid var(--line); color: var(--ink); }
+  .btn.small { padding: 5px 10px; font-size: 0.8rem; }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+
+  .card-list { display: flex; flex-direction: column; gap: 8px; }
+  .item {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 10px 12px; box-shadow: var(--shadow);
+    display: flex; align-items: center; gap: 10px;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+  }
+  .item.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .item .check {
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; color: var(--accent-ink); background: transparent;
+  }
+  .item.selected .check { background: var(--accent); border-color: var(--accent); }
+  .item .name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .item .meta { font-size: 0.78rem; color: var(--ink-soft); flex-shrink: 0; }
+  .item.done { cursor: default; }
+  .item.done .name { color: var(--ink-soft); }
+
+  .chip {
+    display: inline-block; font-size: 0.7rem; font-weight: 600;
+    padding: 2px 8px; border-radius: 99px; flex-shrink: 0;
+  }
+  .chip.bought { background: var(--credit-soft); color: var(--credit); }
+
+  .cartbar {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(64px + env(safe-area-inset-bottom));
+    width: min(652px, calc(100vw - 28px));
+    background: var(--ink); color: var(--ground);
+    border-radius: 12px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    z-index: 15;
+  }
+  .cartbar .info { flex: 1; font-size: 0.85rem; font-weight: 600; }
+  .cartbar button {
+    font: inherit; font-weight: 700; cursor: pointer; border: none; border-radius: 8px;
+    padding: 8px 14px;
+  }
+  .cartbar .go { background: var(--accent); color: var(--accent-ink); }
+  .cartbar .clear { background: transparent; color: var(--ground); opacity: 0.75; }
+
+  .sheet-back {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 30;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .sheet {
+    background: var(--ground); width: min(680px, 100vw);
+    border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    max-height: 85vh; overflow-y: auto;
+  }
+  .sheet h3 {
+    font-family: "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
+    margin: 0 0 4px; font-size: 1.05rem;
+  }
+  .sheet .items-note { font-size: 0.8rem; color: var(--ink-soft); margin: 0 0 14px; }
+  .sheet .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .sheet .field label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); font-weight: 600; }
+  .sheet .row { display: flex; gap: 8px; }
+  .sheet .row > * { flex: 1; }
+  .receipt-drop {
+    border: 1px dashed var(--line); border-radius: var(--radius);
+    padding: 12px; text-align: center; color: var(--ink-soft); font-size: 0.85rem;
+    cursor: pointer; background: var(--card);
+  }
+  .receipt-drop img { max-width: 100%; max-height: 140px; border-radius: 6px; display: block; margin: 0 auto; }
+  .sheet .actions { display: flex; gap: 8px; margin-top: 14px; }
+  .sheet .actions .btn { flex: 1; padding: 12px; }
+
+  .trip {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 12px; box-shadow: var(--shadow);
+  }
+  .trip .top { display: flex; align-items: center; gap: 10px; }
+  .trip .avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.78rem; font-weight: 700; flex-shrink: 0;
+  }
+  .trip .who { flex: 1; min-width: 0; }
+  .trip .who .payer { font-weight: 700; }
+  .trip .who .meta { font-size: 0.75rem; color: var(--ink-soft); }
+  .trip .total { font-weight: 700; font-size: 1.05rem; }
+  .trip .thumb {
+    width: 44px; height: 44px; object-fit: cover; border-radius: 8px;
+    border: 1px solid var(--line); cursor: zoom-in; flex-shrink: 0;
+  }
+  .trip .items { font-size: 0.82rem; color: var(--ink-soft); margin-top: 8px; overflow-wrap: anywhere; }
+  .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+  .bal-row {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 9px 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .bal-row .pname { flex: 1; font-weight: 600; }
+  .bal-row .bal { font-weight: 700; }
+  .bal-row .bal.pos { color: var(--credit); }
+  .bal-row .bal.neg { color: var(--debit); }
+  .bal-bar { height: 4px; border-radius: 2px; background: var(--line); flex: 1; max-width: 90px; overflow: hidden; position: relative; }
+  .bal-bar span { position: absolute; top: 0; bottom: 0; left: 0; }
+
+  .settle {
+    background: var(--accent-soft); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 10px 12px; font-size: 0.88rem;
+  }
+
+  .person-row {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 9px 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .person-row .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700; flex-shrink: 0;
+  }
+  .person-row .pname { flex: 1; font-weight: 600; }
+  .person-row .spent { font-size: 0.8rem; color: var(--ink-soft); }
+
+  .note { font-size: 0.78rem; color: var(--ink-soft); margin: 10px 2px; }
+  .empty {
+    text-align: center; color: var(--ink-soft); font-size: 0.85rem;
+    padding: 26px 10px; border: 1px dashed var(--line); border-radius: var(--radius);
+  }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+
+  .toast {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 120px; background: var(--ink); color: var(--ground);
+    padding: 8px 16px; border-radius: 99px; font-size: 0.82rem; font-weight: 600;
+    opacity: 0; transition: opacity 0.25s; pointer-events: none; z-index: 40;
+  }
+  .toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+  .icon-btn {
+    background: none; border: none; cursor: pointer; color: var(--ink-soft);
+    font-size: 1rem; padding: 4px 6px; border-radius: 6px; flex-shrink: 0;
+  }
+  .icon-btn:hover { color: var(--debit); }
+
+  .viewer {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
+    display: flex; align-items: center; justify-content: center; cursor: zoom-out;
+  }
+  .viewer img { max-width: 95vw; max-height: 92vh; border-radius: 8px; }
+
+  .setup { max-width: 560px; margin: 60px auto; padding: 0 16px; }
+  .setup h1 { font-size: 1.2rem; }
+  .setup code {
+    background: var(--card); border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 6px; font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+
+<div id="setupScreen" class="setup" hidden>
+  <h1>⚙️ Not configured yet</h1>
+  <p>This page needs a Supabase project behind it. Open <code>index.html</code> and fill in
+  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> at the top of the script,
+  after running <code>schema.sql</code> in the Supabase SQL editor. See <code>README.md</code>.</p>
+</div>
+
+<div class="wrap" id="app" hidden>
+  <header>
+    <h1><span class="tick">✓</span> Group Shopping</h1>
+    <div class="head-right">
+      <span class="live" id="liveBadge">connecting…</span>
+      <select class="currency-pick" id="currencySel" aria-label="Currency">
+        <option value="€">EUR €</option>
+        <option value="$">USD $</option>
+        <option value="£">GBP £</option>
+        <option value="лв">BGN лв</option>
+        <option value="L">ALL L</option>
+      </select>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Total spent</div><div class="value money" id="statTotal">—</div></div>
+    <div class="stat"><div class="label" id="statOpenLabel">To buy</div><div class="value pending-c num" id="statOpen">—</div></div>
+    <div class="stat"><div class="label">Per person</div><div class="value money" id="statShare">—</div></div>
+  </div>
+
+  <section id="tab-list">
+    <div class="day-strip" id="dayStrip"></div>
+    <form class="add-row" id="addItemForm">
+      <input type="text" id="newItemName" placeholder="Add item… e.g. Olive oil ×2" aria-label="New item" required>
+      <button class="btn" type="submit">Add</button>
+    </form>
+    <div class="toolbar">
+      <button class="btn ghost small" id="selectAllBtn" type="button">Select all</button>
+      <button class="btn ghost small" id="copyDayBtn" type="button">Copy items from another day…</button>
+    </div>
+    <div class="add-row" id="copyDayForm" hidden>
+      <select id="copySrcDay" aria-label="Source day" style="flex:1;"></select>
+      <button class="btn" id="copyDayGo" type="button">Copy</button>
+    </div>
+    <p class="note">Tap items to put them in the cart, then <strong>Check out</strong> — one payer and one receipt total per shopping run. Multiple runs a day are fine.</p>
+    <h2>To buy <span class="count" id="openCount"></span></h2>
+    <div class="card-list" id="openList"></div>
+    <h2>Bought this day <span class="count" id="boughtCount"></span></h2>
+    <div class="card-list" id="boughtList"></div>
+  </section>
+
+  <section id="tab-ledger" hidden>
+    <h2>Shopping runs</h2>
+    <div class="card-list" id="tripList"></div>
+    <div class="toolbar" style="margin-top:14px;">
+      <button class="btn ghost" id="exportCsv" type="button">Download runs (CSV)</button>
+    </div>
+  </section>
+
+  <section id="tab-people" hidden>
+    <form class="add-row" id="addPersonForm">
+      <input type="text" id="newPersonName" placeholder="Add person…" aria-label="New person" required>
+      <button class="btn" type="submit">Add</button>
+    </form>
+    <h2>People <span class="count" id="peopleCount"></span></h2>
+    <div class="card-list" id="peopleList"></div>
+  </section>
+
+  <section id="tab-balances" hidden>
+    <h2>Who's ahead, who owes</h2>
+    <p class="note">Each shopping run is split equally across everyone. Positive = paid more than their share.</p>
+    <div class="card-list" id="balanceList"></div>
+    <h2>Settle up</h2>
+    <div class="card-list" id="settleList"></div>
+  </section>
+</div>
+
+<div class="cartbar" id="cartBar" hidden>
+  <span class="info" id="cartInfo"></span>
+  <button class="clear" id="cartClear" type="button">Clear</button>
+  <button class="go" id="cartGo" type="button">Check out →</button>
+</div>
+
+<div class="sheet-back" id="sheetBack" hidden>
+  <form class="sheet" id="checkoutForm">
+    <h3>Log this shopping run</h3>
+    <p class="items-note" id="coItems"></p>
+    <div class="row">
+      <div class="field">
+        <label for="coPayer">Who paid</label>
+        <select id="coPayer" required></select>
+      </div>
+      <div class="field">
+        <label for="coTotal">Receipt total</label>
+        <input type="number" step="0.01" min="0" id="coTotal" placeholder="0.00" required>
+      </div>
+    </div>
+    <div class="field">
+      <label for="coNote">Store / note (optional)</label>
+      <input type="text" id="coNote" placeholder="e.g. Lidl, beach kiosk">
+    </div>
+    <div class="field">
+      <label>Receipt photo (optional)</label>
+      <div class="receipt-drop" id="receiptDrop" role="button" tabindex="0">📷 Snap or attach the receipt</div>
+      <input type="file" id="coReceipt" accept="image/*" capture="environment" style="display:none">
+    </div>
+    <div class="actions">
+      <button class="btn ghost" type="button" id="coCancel">Cancel</button>
+      <button class="btn" type="submit" id="coSave">Save run</button>
+    </div>
+  </form>
+</div>
+
+<div class="viewer" id="viewer" hidden><img id="viewerImg" alt="Receipt"></div>
+
+<nav class="tabs" aria-label="Sections" id="tabBar" hidden>
+  <button data-tab="list" class="active"><span class="icon" aria-hidden="true">🛒</span>List</button>
+  <button data-tab="ledger"><span class="icon" aria-hidden="true">🧾</span>Runs</button>
+  <button data-tab="people"><span class="icon" aria-hidden="true">👥</span>People</button>
+  <button data-tab="balances"><span class="icon" aria-hidden="true">⚖️</span>Balances</button>
+</nav>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── Fill these two in (Supabase Dashboard → Project Settings → API) ──────
+  var SUPABASE_URL = "https://zsigxsuamrvvnbzgyrhg.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_sITh56LJDR-3d7eUPbCBDQ_xR-3ykA3";
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (SUPABASE_URL.indexOf("http") !== 0) {
+    document.getElementById("setupScreen").hidden = false;
+    return;
+  }
+  document.getElementById("app").hidden = false;
+  document.getElementById("tabBar").hidden = false;
+
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  var TRIP_START = "2026-07-30";
+  var TRIP_END = "2026-08-08";
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function todayStr() {
+    var d = new Date();
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+  function tripDays() {
+    var out = [];
+    var d = new Date(TRIP_START + "T12:00:00");
+    var end = new Date(TRIP_END + "T12:00:00");
+    while (d <= end) {
+      out.push(d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()));
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
+  var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  function dayLabel(day) {
+    var d = new Date(day + "T12:00:00");
+    return WEEKDAYS[d.getDay()] + " " + d.getDate() + "." + pad2(d.getMonth() + 1);
+  }
+  function timeLabel(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+
+  var people = [];
+  var items = [];
+  var trips = [];
+  var currency = localStorage.getItem("gs-currency") || "€";
+  var cart = {};
+  var pendingReceiptBlob = null;
+  var pendingReceiptPreview = null;
+  var selectedDay = todayStr();
+  if (selectedDay < TRIP_START) selectedDay = TRIP_START;
+  if (selectedDay > TRIP_END) selectedDay = TRIP_END;
+
+  function fmt(n) {
+    return currency + " " + (Math.round(n * 100) / 100).toFixed(2);
+  }
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : s;
+    return d.innerHTML;
+  }
+  function toast(msg) {
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { t.classList.remove("show"); }, 2200);
+  }
+  function fail(err, what) {
+    console.error(what, err);
+    toast(what + " failed: " + (err && err.message ? err.message : "network error"));
+  }
+  function personName(id) {
+    var p = people.find(function (x) { return x.id === id; });
+    return p ? p.name : "?";
+  }
+  function initials(name) {
+    return name.trim().split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join("").toUpperCase();
+  }
+  function cartIds() { return Object.keys(cart); }
+
+  // ── seed data (first boot on an empty database) ──
+  var STARTER = [
+    "Meats for the oven (meatballs/steaks) ~2.5kg",
+    "Bread ×4",
+    "Feta cheese 1kg",
+    "Eggs ×40",
+    "Milk large ×2",
+    "Plant-based milk ×1",
+    "Cereal ×1 pack",
+    "Oats ×1 pack",
+    "Cream cheese ×2 packs",
+    "Sliced meats assorted ×6",
+    "Sliced yellow cheese/gouda ×4 packs",
+    "Spread (lyutenitsa/eggplant) 2–3 jars",
+    "Spicy peppers (jar)",
+    "Potatoes 4kg",
+    "Salad bags ×3",
+    "Cucumbers 1.5kg",
+    "Dill",
+    "Garlic & onion",
+    "Bananas 2kg",
+    "Greek yoghurt ×6",
+    "Seasoning (paprika, garlic)",
+    "Olive oil",
+    "Water 6-pack ×2",
+    "Soda water ×1 pack",
+    "Cola Zero (a few bottles)",
+    "Nespresso pods (regular + decaf)",
+    "Ground coffee ×1 pack",
+    "Ice creams ×12+",
+    "Kinder Pingui",
+    "Ice ×4 bags",
+    "Paper towels",
+    "Toilet paper",
+    "Olives"
+  ];
+  var ROSTER = [
+    "Taulant", "Lilyana", "Mitaka", "Antonio", "Bunny",
+    "Kristiyan Stanev", "Velly", "Tsvetomir", "Dilyan Zhelezarski",
+    "Stefan Pantev", "Ama", "Dulev", "Lyubomir Nikolov", "Ico Manolov", "Milena"
+  ];
+  var seedTried = false;
+  function maybeSeed() {
+    if (seedTried) return Promise.resolve();
+    seedTried = true;
+    var jobs = [];
+    if (!people.length) {
+      jobs.push(sb.from("people").insert(ROSTER.map(function (n) { return { name: n }; })));
+    }
+    if (!items.length && !trips.length) {
+      jobs.push(sb.from("items").insert(STARTER.map(function (n) {
+        return { name: n, day: TRIP_START, status: "open" };
+      })));
+    }
+    if (!jobs.length) return Promise.resolve();
+    return Promise.all(jobs).then(function (rs) {
+      rs.forEach(function (r) { if (r.error) fail(r.error, "Seeding"); });
+      return loadAll(true);
+    });
+  }
+
+  // ── data ──
+  function loadAll(skipSeed) {
+    return Promise.all([
+      sb.from("people").select("*").order("created_at"),
+      sb.from("items").select("*").order("created_at", { ascending: false }),
+      sb.from("trips").select("*").order("created_at", { ascending: false })
+    ]).then(function (res) {
+      for (var k = 0; k < 3; k++) { if (res[k].error) throw res[k].error; }
+      people = res[0].data;
+      items = res[1].data;
+      trips = res[2].data;
+      render();
+      if (!skipSeed) return maybeSeed();
+    }).catch(function (err) { fail(err, "Loading"); });
+  }
+
+  var reloadTimer = null;
+  function scheduleReload() {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(function () { loadAll(); }, 150);
+  }
+
+  var badge = document.getElementById("liveBadge");
+  sb.channel("room")
+    .on("postgres_changes", { event: "*", schema: "public", table: "items" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "people" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, scheduleReload)
+    .subscribe(function (status) {
+      var on = status === "SUBSCRIBED";
+      badge.textContent = on ? "live" : "offline";
+      badge.classList.toggle("on", on);
+      if (on) scheduleReload();
+    });
+
+  // ── tabs ──
+  var tabBtns = document.querySelectorAll(".tabs button");
+  tabBtns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      tabBtns.forEach(function (x) { x.classList.remove("active"); });
+      b.classList.add("active");
+      ["list", "ledger", "people", "balances"].forEach(function (t) {
+        document.getElementById("tab-" + t).hidden = t !== b.dataset.tab;
+      });
+    });
+  });
+
+  // ── currency (device-local preference) ──
+  var curSel = document.getElementById("currencySel");
+  curSel.value = currency;
+  curSel.addEventListener("change", function () {
+    currency = curSel.value;
+    localStorage.setItem("gs-currency", currency);
+    render();
+  });
+
+  // ── add item / person ──
+  document.getElementById("addItemForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var inp = document.getElementById("newItemName");
+    var name = inp.value.trim();
+    if (!name) return;
+    inp.value = "";
+    sb.from("items").insert({ name: name, day: selectedDay, status: "open" }).then(function (r) {
+      if (r.error) fail(r.error, "Adding item"); else loadAll();
+    });
+  });
+  document.getElementById("addPersonForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var inp = document.getElementById("newPersonName");
+    var name = inp.value.trim();
+    if (!name) return;
+    if (people.some(function (p) { return p.name.toLowerCase() === name.toLowerCase(); })) {
+      toast("Already in the group"); return;
+    }
+    inp.value = "";
+    sb.from("people").insert({ name: name }).then(function (r) {
+      if (r.error) fail(r.error, "Adding person"); else loadAll();
+    });
+  });
+
+  // ── select all / copy day ──
+  document.getElementById("selectAllBtn").addEventListener("click", function () {
+    var open = items.filter(function (i) { return i.status === "open" && i.day === selectedDay; });
+    var allSelected = open.length && open.every(function (i) { return cart[i.id]; });
+    open.forEach(function (i) {
+      if (allSelected) delete cart[i.id]; else cart[i.id] = true;
+    });
+    render();
+  });
+
+  var copyForm = document.getElementById("copyDayForm");
+  document.getElementById("copyDayBtn").addEventListener("click", function () {
+    copyForm.hidden = !copyForm.hidden;
+    if (copyForm.hidden) return;
+    var sel = document.getElementById("copySrcDay");
+    sel.innerHTML = "";
+    tripDays().forEach(function (day) {
+      if (day === selectedDay) return;
+      var count = items.filter(function (i) { return i.day === day; }).length;
+      if (!count) return;
+      var o = document.createElement("option");
+      o.value = day;
+      o.textContent = dayLabel(day) + " — " + count + " item" + (count === 1 ? "" : "s");
+      sel.appendChild(o);
+    });
+    if (!sel.options.length) {
+      var o2 = document.createElement("option");
+      o2.value = ""; o2.textContent = "No other day has items";
+      sel.appendChild(o2);
+    }
+  });
+  document.getElementById("copyDayGo").addEventListener("click", function () {
+    var src = document.getElementById("copySrcDay").value;
+    if (!src) return;
+    var existing = {};
+    items.forEach(function (i) {
+      if (i.day === selectedDay) existing[i.name.toLowerCase()] = true;
+    });
+    var toAdd = [];
+    items.filter(function (i) { return i.day === src; }).forEach(function (i) {
+      if (!existing[i.name.toLowerCase()]) {
+        existing[i.name.toLowerCase()] = true;
+        toAdd.push({ name: i.name, day: selectedDay, status: "open" });
+      }
+    });
+    copyForm.hidden = true;
+    if (!toAdd.length) { toast("Nothing new to copy"); return; }
+    sb.from("items").insert(toAdd).then(function (r) {
+      if (r.error) fail(r.error, "Copying");
+      else { toast("Copied " + toAdd.length + " item" + (toAdd.length === 1 ? "" : "s")); loadAll(); }
+    });
+  });
+
+  // ── cart / checkout ──
+  document.getElementById("cartClear").addEventListener("click", function () {
+    cart = {}; render();
+  });
+  document.getElementById("cartGo").addEventListener("click", openCheckout);
+
+  var sheetBack = document.getElementById("sheetBack");
+  var receiptDrop = document.getElementById("receiptDrop");
+  var receiptInput = document.getElementById("coReceipt");
+
+  function openCheckout() {
+    var ids = cartIds();
+    if (!ids.length) return;
+    var names = ids.map(function (id) {
+      var it = items.find(function (x) { return x.id === id; });
+      return it ? it.name : "";
+    }).filter(Boolean);
+    document.getElementById("coItems").textContent =
+      names.length + " item" + (names.length === 1 ? "" : "s") + ": " + names.join(", ");
+    var sel = document.getElementById("coPayer");
+    sel.innerHTML = "";
+    people.forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p.id; o.textContent = p.name;
+      sel.appendChild(o);
+    });
+    document.getElementById("coTotal").value = "";
+    document.getElementById("coNote").value = "";
+    pendingReceiptBlob = null;
+    pendingReceiptPreview = null;
+    receiptDrop.innerHTML = "📷 Snap or attach the receipt";
+    document.getElementById("coSave").disabled = false;
+    sheetBack.hidden = false;
+    document.getElementById("coTotal").focus();
+  }
+  function closeCheckout() { sheetBack.hidden = true; }
+  document.getElementById("coCancel").addEventListener("click", closeCheckout);
+  sheetBack.addEventListener("click", function (e) {
+    if (e.target === sheetBack) closeCheckout();
+  });
+
+  receiptDrop.addEventListener("click", function () { receiptInput.click(); });
+  receiptDrop.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); receiptInput.click(); }
+  });
+  receiptInput.addEventListener("change", function () {
+    var f = receiptInput.files[0];
+    receiptInput.value = "";
+    if (!f) return;
+    var img = new Image();
+    var url = URL.createObjectURL(f);
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      var MAX = 1400;
+      var scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      var c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      pendingReceiptPreview = c.toDataURL("image/jpeg", 0.7);
+      c.toBlob(function (blob) { pendingReceiptBlob = blob; }, "image/jpeg", 0.7);
+      receiptDrop.innerHTML = "";
+      var pv = document.createElement("img");
+      pv.src = pendingReceiptPreview; pv.alt = "Receipt preview";
+      receiptDrop.appendChild(pv);
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      toast("Couldn't read that image");
+    };
+    img.src = url;
+  });
+
+  document.getElementById("checkoutForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var payer = document.getElementById("coPayer").value;
+    var total = parseFloat(document.getElementById("coTotal").value);
+    if (!payer || isNaN(total)) { toast("Payer and total are required"); return; }
+    var saveBtn = document.getElementById("coSave");
+    saveBtn.disabled = true;
+
+    var uploadStep = Promise.resolve(null);
+    if (pendingReceiptBlob) {
+      var path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".jpg";
+      uploadStep = sb.storage.from("receipts")
+        .upload(path, pendingReceiptBlob, { contentType: "image/jpeg" })
+        .then(function (r) {
+          if (r.error) { toast("Receipt upload failed — saving run without it"); return null; }
+          return sb.storage.from("receipts").getPublicUrl(path).data.publicUrl;
+        });
+    }
+
+    uploadStep.then(function (receiptUrl) {
+      return sb.from("trips").insert({
+        day: selectedDay, payer: payer, total: total,
+        note: document.getElementById("coNote").value.trim(),
+        receipt_url: receiptUrl
+      }).select().single();
+    }).then(function (r) {
+      if (r.error) throw r.error;
+      var ids = cartIds();
+      cart = {};
+      return sb.from("items")
+        .update({ status: "bought", trip_id: r.data.id })
+        .in("id", ids)
+        .then(function (r2) {
+          if (r2.error) throw r2.error;
+          toast("Run saved: " + fmt(total) + " by " + personName(payer));
+          closeCheckout();
+          loadAll();
+        });
+    }).catch(function (err) {
+      saveBtn.disabled = false;
+      fail(err, "Saving run");
+    });
+  });
+
+  // ── trips ──
+  function deleteTrip(t) {
+    sb.from("items").update({ status: "open", trip_id: null }).eq("trip_id", t.id)
+      .then(function (r) {
+        if (r.error) throw r.error;
+        return sb.from("trips").delete().eq("id", t.id);
+      })
+      .then(function (r) {
+        if (r.error) throw r.error;
+        toast("Run removed — items are back on the list");
+        loadAll();
+      })
+      .catch(function (err) { fail(err, "Removing run"); });
+  }
+
+  var viewer = document.getElementById("viewer");
+  var viewerImg = document.getElementById("viewerImg");
+  viewer.addEventListener("click", function () { viewer.hidden = true; viewerImg.src = ""; });
+
+  // ── computations ──
+  function totalSpent() {
+    return trips.reduce(function (s, t) { return s + Number(t.total); }, 0);
+  }
+  function balances() {
+    var map = {};
+    people.forEach(function (p) { map[p.id] = { person: p, paid: 0, balance: 0 }; });
+    if (!people.length) return map;
+    var share = totalSpent() / people.length;
+    trips.forEach(function (t) {
+      if (map[t.payer]) map[t.payer].paid += Number(t.total);
+    });
+    Object.keys(map).forEach(function (id) {
+      map[id].balance = map[id].paid - share;
+    });
+    return map;
+  }
+  function settlements() {
+    var bal = balances();
+    var creditors = [], debtors = [];
+    Object.keys(bal).forEach(function (id) {
+      var b = bal[id].balance;
+      if (b > 0.005) creditors.push({ p: bal[id].person, amt: b });
+      else if (b < -0.005) debtors.push({ p: bal[id].person, amt: -b });
+    });
+    creditors.sort(function (a, b) { return b.amt - a.amt; });
+    debtors.sort(function (a, b) { return b.amt - a.amt; });
+    var out = [], ci = 0, di = 0;
+    while (ci < creditors.length && di < debtors.length) {
+      var pay = Math.min(creditors[ci].amt, debtors[di].amt);
+      out.push({ from: debtors[di].p, to: creditors[ci].p, amt: pay });
+      creditors[ci].amt -= pay; debtors[di].amt -= pay;
+      if (creditors[ci].amt < 0.005) ci++;
+      if (debtors[di].amt < 0.005) di++;
+    }
+    return out;
+  }
+
+  // ── render ──
+  function render() {
+    var open = items.filter(function (i) { return i.status === "open" && i.day === selectedDay; });
+    var bought = items.filter(function (i) { return i.status === "bought" && i.day === selectedDay; });
+
+    document.getElementById("statTotal").textContent = fmt(totalSpent());
+    document.getElementById("statOpenLabel").textContent = "To buy · " + dayLabel(selectedDay);
+    document.getElementById("statOpen").textContent = open.length + " item" + (open.length === 1 ? "" : "s");
+    document.getElementById("statShare").textContent = people.length ? fmt(totalSpent() / people.length) : "—";
+    document.getElementById("openCount").textContent = "(" + open.length + ")";
+    document.getElementById("boughtCount").textContent = "(" + bought.length + ")";
+    document.getElementById("peopleCount").textContent = "(" + people.length + ")";
+
+    renderDays();
+    renderOpen(open);
+    renderBought(bought);
+    renderTrips();
+    renderPeople();
+    renderBalances();
+    renderCart();
+  }
+
+  function renderDays() {
+    var el = document.getElementById("dayStrip");
+    el.innerHTML = "";
+    var today = todayStr();
+    tripDays().forEach(function (day) {
+      var open = items.filter(function (i) { return i.day === day && i.status === "open"; }).length;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "day-chip" + (day === selectedDay ? " active" : "") + (day === today ? " today" : "");
+      b.textContent = dayLabel(day) + (open ? " · " + open : "");
+      b.addEventListener("click", function () {
+        selectedDay = day;
+        copyForm.hidden = true;
+        render();
+      });
+      el.appendChild(b);
+    });
+    var active = el.querySelector(".active");
+    if (active && active.scrollIntoView) active.scrollIntoView({ inline: "center", block: "nearest" });
+  }
+
+  function renderCart() {
+    var n = cartIds().length;
+    var bar = document.getElementById("cartBar");
+    bar.hidden = !n;
+    if (n) {
+      document.getElementById("cartInfo").textContent =
+        n + " item" + (n === 1 ? "" : "s") + " in the cart";
+    }
+  }
+
+  function renderOpen(open) {
+    var el = document.getElementById("openList");
+    el.innerHTML = "";
+    if (!open.length) {
+      el.innerHTML = '<div class="empty">Nothing to buy this day. Add items above, or copy from another day.</div>';
+      return;
+    }
+    open.forEach(function (i) {
+      var d = document.createElement("div");
+      d.className = "item" + (cart[i.id] ? " selected" : "");
+      d.setAttribute("role", "button");
+      d.tabIndex = 0;
+      d.innerHTML =
+        '<span class="check">' + (cart[i.id] ? "✓" : "") + '</span>' +
+        '<span class="name">' + esc(i.name) + '</span>' +
+        '<button class="icon-btn" data-act="del" aria-label="Remove item">✕</button>';
+      function toggle() {
+        if (cart[i.id]) delete cart[i.id]; else cart[i.id] = true;
+        render();
+      }
+      d.addEventListener("click", function (e) {
+        if (e.target.closest('[data-act="del"]')) return;
+        toggle();
+      });
+      d.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
+      d.querySelector('[data-act="del"]').addEventListener("click", function () {
+        delete cart[i.id];
+        sb.from("items").delete().eq("id", i.id).then(function (r) {
+          if (r.error) fail(r.error, "Removing item"); else loadAll();
+        });
+      });
+      el.appendChild(d);
+    });
+  }
+
+  function renderBought(bought) {
+    var el = document.getElementById("boughtList");
+    el.innerHTML = "";
+    if (!bought.length) {
+      el.innerHTML = '<div class="empty">Nothing bought yet this day.</div>';
+      return;
+    }
+    bought.forEach(function (i) {
+      var t = trips.find(function (x) { return x.id === i.trip_id; });
+      var d = document.createElement("div");
+      d.className = "item done";
+      d.innerHTML =
+        '<span class="chip bought">✓</span>' +
+        '<span class="name">' + esc(i.name) + '</span>' +
+        '<span class="meta">' + (t ? esc(personName(t.payer)) + (t.note ? " · " + esc(t.note) : "") : "") + '</span>';
+      el.appendChild(d);
+    });
+  }
+
+  function renderTrips() {
+    var el = document.getElementById("tripList");
+    el.innerHTML = "";
+    if (!trips.length) {
+      el.innerHTML = '<div class="empty">No shopping runs yet. Select items on the List tab and check out.</div>';
+      return;
+    }
+    trips.forEach(function (t) {
+      var its = items.filter(function (i) { return i.trip_id === t.id; });
+      var d = document.createElement("div");
+      d.className = "trip";
+      var pname = personName(t.payer);
+      var metaBits = [dayLabel(t.day)];
+      if (t.created_at) metaBits.push(timeLabel(t.created_at));
+      if (t.note) metaBits.push(t.note);
+      d.innerHTML =
+        '<div class="top">' +
+          '<span class="avatar">' + esc(initials(pname)) + '</span>' +
+          '<div class="who"><div class="payer">' + esc(pname) + '</div>' +
+          '<div class="meta">' + esc(metaBits.join(" · ")) + '</div></div>' +
+          (t.receipt_url ? '<img class="thumb" src="' + esc(t.receipt_url) + '" alt="Receipt">' : "") +
+          '<span class="total money">' + fmt(Number(t.total)) + '</span>' +
+        '</div>' +
+        '<div class="items">' + (its.length ? esc(its.map(function (i) { return i.name; }).join(", ")) : "<em>no items linked</em>") + '</div>' +
+        '<div class="trip-actions">' +
+          '<button class="btn ghost small" data-act="edit" type="button">Edit</button>' +
+          '<button class="btn ghost small" data-act="del" type="button">Delete run</button>' +
+        '</div>';
+      if (t.receipt_url) {
+        d.querySelector(".thumb").addEventListener("click", function () {
+          viewerImg.src = t.receipt_url;
+          viewer.hidden = false;
+        });
+      }
+      d.querySelector('[data-act="del"]').addEventListener("click", function () { deleteTrip(t); });
+      d.querySelector('[data-act="edit"]').addEventListener("click", function () {
+        var actions = d.querySelector(".trip-actions");
+        if (actions.querySelector("select")) return;
+        actions.innerHTML = "";
+        var sel = document.createElement("select");
+        people.forEach(function (p) {
+          var o = document.createElement("option");
+          o.value = p.id; o.textContent = p.name;
+          if (p.id === t.payer) o.selected = true;
+          sel.appendChild(o);
+        });
+        var inp = document.createElement("input");
+        inp.type = "number"; inp.step = "0.01"; inp.min = "0";
+        inp.value = Number(t.total).toFixed(2);
+        inp.style.width = "90px";
+        var ok = document.createElement("button");
+        ok.className = "btn small"; ok.type = "button"; ok.textContent = "Save";
+        ok.addEventListener("click", function () {
+          var v = parseFloat(inp.value);
+          if (isNaN(v)) { toast("Bad amount"); return; }
+          sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id).then(function (r) {
+            if (r.error) fail(r.error, "Updating run"); else loadAll();
+          });
+        });
+        actions.appendChild(sel); actions.appendChild(inp); actions.appendChild(ok);
+      });
+      el.appendChild(d);
+    });
+  }
+
+  function renderPeople() {
+    var el = document.getElementById("peopleList");
+    el.innerHTML = "";
+    if (!people.length) {
+      el.innerHTML = '<div class="empty">Add your people here.</div>';
+      return;
+    }
+    var bal = balances();
+    people.forEach(function (p) {
+      var d = document.createElement("div");
+      d.className = "person-row";
+      d.innerHTML =
+        '<span class="avatar">' + esc(initials(p.name)) + '</span>' +
+        '<span class="pname">' + esc(p.name) + '</span>' +
+        '<span class="spent money">paid ' + fmt(bal[p.id] ? bal[p.id].paid : 0) + '</span>' +
+        '<button class="icon-btn" data-act="del" aria-label="Remove person">✕</button>';
+      d.querySelector('[data-act="del"]').addEventListener("click", function () {
+        if (trips.some(function (t) { return t.payer === p.id; })) {
+          toast("Has paid runs — can't remove"); return;
+        }
+        sb.from("people").delete().eq("id", p.id).then(function (r) {
+          if (r.error) fail(r.error, "Removing person"); else loadAll();
+        });
+      });
+      el.appendChild(d);
+    });
+  }
+
+  function renderBalances() {
+    var el = document.getElementById("balanceList");
+    var sl = document.getElementById("settleList");
+    el.innerHTML = ""; sl.innerHTML = "";
+    if (!people.length || !trips.length) {
+      el.innerHTML = '<div class="empty">Balances appear once shopping runs are logged.</div>';
+      sl.innerHTML = '<div class="empty">Nothing to settle yet.</div>';
+      return;
+    }
+    var bal = balances();
+    var maxAbs = 0.01;
+    Object.keys(bal).forEach(function (id) {
+      maxAbs = Math.max(maxAbs, Math.abs(bal[id].balance));
+    });
+    people
+      .slice()
+      .sort(function (a, b) { return bal[b.id].balance - bal[a.id].balance; })
+      .forEach(function (p) {
+        var b = bal[p.id].balance;
+        var pct = Math.min(100, Math.abs(b) / maxAbs * 100);
+        var cls = b >= 0.005 ? "pos" : (b <= -0.005 ? "neg" : "");
+        var color = b >= 0.005 ? "var(--credit)" : "var(--debit)";
+        var d = document.createElement("div");
+        d.className = "bal-row";
+        d.innerHTML =
+          '<span class="pname">' + esc(p.name) + '</span>' +
+          '<span class="bal-bar"><span style="width:' + pct + '%;background:' + color + ';"></span></span>' +
+          '<span class="bal money ' + cls + '">' + (b >= 0 ? "+" : "−") + fmt(Math.abs(b)) + "</span>";
+        el.appendChild(d);
+      });
+
+    var st = settlements();
+    if (!st.length) {
+      sl.innerHTML = '<div class="empty">All square. 🎉</div>';
+    } else {
+      st.forEach(function (s) {
+        var d = document.createElement("div");
+        d.className = "settle";
+        d.innerHTML = "<strong>" + esc(s.from.name) + "</strong> pays <strong>" +
+          esc(s.to.name) + "</strong> <span class='money'>" + fmt(s.amt) + "</span>";
+        sl.appendChild(d);
+      });
+    }
+  }
+
+  // ── CSV export ──
+  document.getElementById("exportCsv").addEventListener("click", function () {
+    var rows = [["day", "payer", "total", "note", "items", "receipt"]];
+    trips.slice().sort(function (a, b) { return String(a.day).localeCompare(String(b.day)); }).forEach(function (t) {
+      var its = items.filter(function (i) { return i.trip_id === t.id; })
+        .map(function (i) { return i.name; }).join("; ");
+      rows.push([t.day, personName(t.payer), Number(t.total).toFixed(2), t.note || "", its, t.receipt_url || ""]);
+    });
+    var csv = rows.map(function (r) {
+      return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(",");
+    }).join("\n");
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "shopping-runs.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  loadAll();
+})();
+</script>
+</body>
+</html>
