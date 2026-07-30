@@ -827,10 +827,15 @@
     .on("postgres_changes", { event: "*", schema: "public", table: "settlements" }, scheduleReload)
     .on("presence", { event: "sync" }, function () {
       var state = chan.presenceState();
+      var seen = {};
       viewers = Object.keys(state).map(function (k) {
         var metas = state[k];
         return metas && metas.length ? metas[0].n : null;
-      }).filter(Boolean);
+      }).filter(function (n) {
+        if (!n || seen[n]) return false;
+        seen[n] = true;
+        return true;
+      });
       renderPresence();
     })
     .subscribe(function (status) {
