@@ -253,6 +253,9 @@
     border: none; border-radius: 99px; padding: 4px 10px;
   }
   .run-chip.pending { opacity: 0.65; cursor: default; }
+  .run-chip.grabbed { background: var(--accent); color: var(--accent-ink); }
+  .run-chip .x { margin-left: 6px; opacity: 0.7; padding: 2px 3px; }
+  .run-chip .x:hover { opacity: 1; }
   .spin {
     display: inline-block; width: 11px; height: 11px;
     border: 2px solid currentColor; border-right-color: transparent;
@@ -598,11 +601,21 @@
     render();
   }
   function syncLink(did, itemId) {
-    track(sb.from("run_items").insert({ trip_id: did, item_id: itemId })).then(function (r) {
+    var l0 = runItems.find(function (x) { return x.trip_id === did && x.item_id === itemId; });
+    track(sb.from("run_items").insert({ trip_id: did, item_id: itemId, grabbed: !!(l0 && l0.grabbed) })).then(function (r) {
       if (r.error && r.error.code !== "23505") { fail(r.error, "Adding to run card"); loadAll(); return; }
       var l = runItems.find(function (x) { return x.trip_id === did && x.item_id === itemId; });
       if (l) { l.pending = false; render(); }
     });
+  }
+  function toggleGrabbed(draftId, link) {
+    link.grabbed = !link.grabbed;
+    render();
+    if (isTmp(draftId) || link.pending) return; // synced together with the link itself
+    track(sb.from("run_items").update({ grabbed: link.grabbed })
+      .eq("trip_id", draftId).eq("item_id", link.item_id)).then(function (r) {
+        if (r.error) { fail(r.error, "Updating cart state"); loadAll(); }
+      });
   }
 
   // ── data ──
@@ -1112,9 +1125,14 @@
           '<span class="avatar">🛒</span>' +
           '<div class="who"><div class="payer">Run card ' + draftNumber(t.id) + ' — open' + (isActive ? " · adding here" : "") +
             (t.pending ? ' <span class="spin" aria-label="opening"></span>' : "") + '</div>' +
-          '<div class="meta">' + links.length + " item" + (links.length === 1 ? "" : "s") +
+          '<div class="meta">' +
+            (function () {
+              var grabbed = links.filter(function (l) { return l.grabbed; }).length;
+              return links.length + " item" + (links.length === 1 ? "" : "s") +
+                (links.length ? " · " + grabbed + " in the cart" : "");
+            })() +
             (t.pending ? " · opening…" : (t.created_at ? " · started " + timeLabel(t.created_at) : "")) +
-            " · everyone sees this live</div></div>" +
+            " · tap = grabbed</div></div>" +
         '</div>' +
         '<div class="run-chips"></div>' +
         '<div class="trip-actions">' +
@@ -1134,16 +1152,27 @@
         var it = items.find(function (x) { return x.id === l.item_id; });
         if (!it) return;
         var ch = document.createElement("button");
-        ch.className = "run-chip" + (l.pending ? " pending" : "");
+        ch.className = "run-chip" + (l.pending ? " pending" : "") + (l.grabbed ? " grabbed" : "");
         ch.type = "button";
+        ch.textContent = (l.grabbed ? "✓ " : "") + it.name;
         if (l.pending) {
-          ch.textContent = it.name + " ";
+          ch.appendChild(document.createTextNode(" "));
           var sp = document.createElement("span");
           sp.className = "spin";
           ch.appendChild(sp);
         } else {
-          ch.textContent = it.name + " ✕";
-          ch.addEventListener("click", function () { removeFromDraft(t.id, l.item_id); });
+          ch.setAttribute("aria-label", it.name + (l.grabbed ? " — in the cart, tap to undo" : " — tap when it's in the cart"));
+          ch.addEventListener("click", function () { toggleGrabbed(t.id, l); });
+          var x = document.createElement("span");
+          x.className = "x";
+          x.textContent = "✕";
+          x.setAttribute("role", "button");
+          x.setAttribute("aria-label", "Remove from card");
+          x.addEventListener("click", function (e) {
+            e.stopPropagation();
+            removeFromDraft(t.id, l.item_id);
+          });
+          ch.appendChild(x);
         }
         chips.appendChild(ch);
       });
