@@ -162,14 +162,13 @@
   .item.selected .check { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .item .name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
   .item .meta { font-size: 0.75rem; color: var(--ink-soft); flex-shrink: 0; }
-  .item.done { background: transparent; }
-  .item.done .name { color: var(--ink-soft); font-weight: 500; }
 
   .chip {
     display: inline-block; font-size: 0.7rem; font-weight: 600;
     padding: 2px 8px; border-radius: 99px; flex-shrink: 0;
   }
   .chip.bought { background: var(--credit-soft); color: var(--credit); }
+  .chip.incard { background: var(--pending-soft); color: var(--pending); }
 
   .cartbar {
     position: fixed; left: 50%; transform: translateX(-50%);
@@ -187,7 +186,6 @@
     padding: 8px 14px;
   }
   .cartbar .go { background: var(--accent); color: var(--accent-ink); }
-  .cartbar .clear { background: transparent; color: var(--ground); opacity: 0.75; }
 
   .sheet-back {
     position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 30;
@@ -246,7 +244,7 @@
     border: 1px solid var(--line); cursor: zoom-in; flex-shrink: 0;
   }
   .trip .items { font-size: 0.82rem; color: var(--ink-soft); margin-top: 8px; overflow-wrap: anywhere; }
-  .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .trip.current { border: 1.5px dashed var(--accent); }
   .run-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .run-chip {
@@ -329,18 +327,13 @@
 
   .setup { max-width: 560px; margin: 60px auto; padding: 0 16px; }
   .setup h1 { font-size: 1.2rem; }
-  .setup code {
-    background: var(--card); border: 1px solid var(--line); border-radius: 5px;
-    padding: 1px 6px; font-size: 0.85em;
-  }
 </style>
 </head>
 <body>
 
 <div id="setupScreen" class="setup" hidden>
   <h1>⚙️ Not configured yet</h1>
-  <p>This page needs a Supabase project behind it. Open <code>index.html</code> and fill in
-  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> at the top of the script.</p>
+  <p>This page needs a Supabase project behind it — fill in the two constants at the top of the script.</p>
 </div>
 
 <div class="wrap" id="app" hidden>
@@ -373,7 +366,7 @@
       <input type="text" id="newItemName" placeholder="Add item to the pool…" aria-label="New item" required>
       <button class="btn" type="submit">Add</button>
     </form>
-    <p class="note">One shared pool — it never changes when you shop. Hit <strong>＋</strong> to put items into the current run (it appears under Runs above), then <strong>Check out run</strong> with who paid + the receipt total. Many runs per day is fine.</p>
+    <p class="note">One shared pool — it never changes when you shop. Hit <strong>＋</strong> to put an item on the shared <strong>run card</strong>: everyone sees the card fill up live, and items already on a card are marked so nobody grabs them twice. Check the card out with who paid + the receipt total.</p>
     <div class="card-list" id="itemList"></div>
     <div class="toolbar" style="margin-top:14px;">
       <button class="btn ghost small" id="exportCsv" type="button">Download all runs (CSV)</button>
@@ -400,13 +393,12 @@
 
 <div class="cartbar" id="cartBar" hidden>
   <span class="info" id="cartInfo"></span>
-  <button class="clear" id="cartClear" type="button">Discard</button>
   <button class="go" id="cartGo" type="button">Check out run →</button>
 </div>
 
 <div class="sheet-back" id="sheetBack" hidden>
   <form class="sheet" id="checkoutForm">
-    <h3 id="coTitle">Log this shopping run</h3>
+    <h3 id="coTitle">Check out this run</h3>
     <p class="items-note">Everything is shared by default. If something was for one person only (cigarettes, meds…), pick them and enter its price — that part won't be split with the group.</p>
     <div class="field">
       <label>Items in this run</label>
@@ -494,13 +486,14 @@
   }
 
   var people = [];
-  var items = [];      // the one shared, permanent list
-  var trips = [];      // shopping runs (day, payer, total, receipt)
-  var runItems = [];   // links: which items were bought in which run
+  var items = [];      // the one shared, permanent pool
+  var trips = [];      // runs: status 'draft' (open card) or 'done' (checked out)
+  var runItems = [];   // links: which items are on which run card
   var currency = localStorage.getItem("gs-currency") || "€";
-  var cart = {};
   var pendingReceiptBlob = null;
   var pendingReceiptPreview = null;
+  var checkoutDraftId = null;
+  var activeDraftId = null;   // which open card THIS device adds to
   var selectedDay = todayStr();
   if (selectedDay < TRIP_START) selectedDay = TRIP_START;
   if (selectedDay > TRIP_END) selectedDay = TRIP_END;
@@ -532,7 +525,26 @@
   function initials(name) {
     return name.trim().split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join("").toUpperCase();
   }
-  function cartIds() { return Object.keys(cart); }
+
+  // ── draft helpers ──
+  function doneTrips() { return trips.filter(function (t) { return t.status !== "draft"; }); }
+  function openDraftsAll() { return trips.filter(function (t) { return t.status === "draft"; }); }
+  function draftsFor(day) { return openDraftsAll().filter(function (t) { return t.day === day; }); }
+  function draftLinks(id) { return runItems.filter(function (l) { return l.trip_id === id; }); }
+  function resolveActiveDraft() {
+    var ds = draftsFor(selectedDay);
+    if (!ds.length) { return null; }
+    var found = ds.find(function (d) { return d.id === activeDraftId; });
+    if (!found) { activeDraftId = ds[0].id; found = ds[0]; }
+    return found;
+  }
+  function itemInDraftMap() {
+    var dm = {};
+    openDraftsAll().forEach(function (t) { dm[t.id] = true; });
+    var m = {};
+    runItems.forEach(function (l) { if (dm[l.trip_id]) m[l.item_id] = l.trip_id; });
+    return m;
+  }
 
   // ── data ──
   function loadAll() {
@@ -562,7 +574,7 @@
     reloadTimer = setTimeout(function () { loadAll(); }, 150);
   }
 
-  // ── optimistic-UI plumbing: local change first, sync after, badge shows state ──
+  // ── optimistic-UI plumbing ──
   var badge = document.getElementById("liveBadge");
   var rtOn = false;
   var pendingOps = 0;
@@ -608,7 +620,7 @@
     });
   });
 
-  // ── currency (device-local preference) ──
+  // ── currency ──
   var curSel = document.getElementById("currencySel");
   curSel.value = currency;
   curSel.addEventListener("change", function () {
@@ -659,28 +671,88 @@
     });
   });
 
-  // ── cart / checkout ──
-  document.getElementById("cartClear").addEventListener("click", function () {
-    cart = {}; render();
-  });
-  document.getElementById("cartGo").addEventListener("click", openCheckout);
+  // ── draft (run card) operations — all shared, all realtime ──
+  function ensureActiveDraft() {
+    var d = resolveActiveDraft();
+    if (d) return Promise.resolve(d.id);
+    return track(sb.from("trips").insert({ day: selectedDay, status: "draft", note: "" }).select().single())
+      .then(function (r) {
+        if (r.error) { fail(r.error, "Starting run card"); return null; }
+        trips.unshift(r.data);
+        activeDraftId = r.data.id;
+        render();
+        return r.data.id;
+      });
+  }
+  function addItemToDraft(item) {
+    if (isTmp(item.id)) { toast("Still saving that item — try again in a second"); return; }
+    var m = itemInDraftMap();
+    if (m[item.id]) {
+      var act = resolveActiveDraft();
+      if (act && m[item.id] === act.id) { removeFromDraft(act.id, item.id); return; }
+      toast("Already on a run card"); return;
+    }
+    ensureActiveDraft().then(function (did) {
+      if (!did) return;
+      runItems.push({ trip_id: did, item_id: item.id, for_person: null, amount: null });
+      render();
+      track(sb.from("run_items").insert({ trip_id: did, item_id: item.id })).then(function (r) {
+        if (r.error && r.error.code !== "23505") { fail(r.error, "Adding to run card"); loadAll(); }
+      });
+    });
+  }
+  function removeFromDraft(draftId, itemId) {
+    runItems = runItems.filter(function (l) { return !(l.trip_id === draftId && l.item_id === itemId); });
+    render();
+    track(sb.from("run_items").delete().eq("trip_id", draftId).eq("item_id", itemId)).then(function (r) {
+      if (r.error) { fail(r.error, "Removing from run card"); loadAll(); }
+    });
+  }
+  function discardDraft(t) {
+    trips = trips.filter(function (x) { return x.id !== t.id; });
+    runItems = runItems.filter(function (l) { return l.trip_id !== t.id; });
+    if (activeDraftId === t.id) activeDraftId = null;
+    render();
+    toast("Run card discarded");
+    if (isTmp(t.id)) return;
+    track(sb.from("trips").delete().eq("id", t.id)).then(function (r) {
+      if (r.error) { fail(r.error, "Discarding run card"); loadAll(); }
+    });
+  }
+  function deleteTrip(t) {
+    trips = trips.filter(function (x) { return x.id !== t.id; });
+    runItems = runItems.filter(function (l) { return l.trip_id !== t.id; });
+    render();
+    toast("Run removed");
+    if (isTmp(t.id)) return;
+    track(sb.from("trips").delete().eq("id", t.id)).then(function (r) {
+      if (r.error) { fail(r.error, "Removing run"); loadAll(); }
+    });
+  }
 
+  // ── checkout (finalize a draft) ──
   var sheetBack = document.getElementById("sheetBack");
   var receiptDrop = document.getElementById("receiptDrop");
   var receiptInput = document.getElementById("coReceipt");
 
-  function openCheckout() {
-    var ids = cartIds();
-    if (!ids.length) return;
-    document.getElementById("coTitle").textContent = "Log run · " + dayLabel(selectedDay);
+  document.getElementById("cartGo").addEventListener("click", function () {
+    var d = resolveActiveDraft();
+    if (d) openCheckout(d);
+  });
+
+  function openCheckout(draft) {
+    var links = draftLinks(draft.id);
+    if (!links.length) { toast("The run card is empty"); return; }
+    checkoutDraftId = draft.id;
+    document.getElementById("coTitle").textContent = "Check out run · " + dayLabel(draft.day);
     var rowsEl = document.getElementById("coItemRows");
     rowsEl.innerHTML = "";
-    ids.forEach(function (id) {
-      var it = items.find(function (x) { return x.id === id; });
+    links.forEach(function (l) {
+      var it = items.find(function (x) { return x.id === l.item_id; });
       if (!it) return;
       var row = document.createElement("div");
       row.className = "co-item";
-      row.dataset.itemId = id;
+      row.dataset.itemId = it.id;
       var nm = document.createElement("span");
       nm.className = "nm";
       nm.textContent = it.name;
@@ -692,11 +764,14 @@
       people.forEach(function (p) {
         var o = document.createElement("option");
         o.value = p.id; o.textContent = p.name;
+        if (l.for_person === p.id) o.selected = true;
         psel.appendChild(o);
       });
       var amt = document.createElement("input");
       amt.type = "number"; amt.step = "0.01"; amt.min = "0";
-      amt.placeholder = "price"; amt.hidden = true;
+      amt.placeholder = "price";
+      amt.hidden = !l.for_person;
+      if (l.amount) amt.value = Number(l.amount).toFixed(2);
       psel.addEventListener("change", function () {
         amt.hidden = !psel.value;
         if (psel.value) amt.focus();
@@ -719,7 +794,7 @@
     sheetBack.hidden = false;
     document.getElementById("coTotal").focus();
   }
-  function closeCheckout() { sheetBack.hidden = true; }
+  function closeCheckout() { sheetBack.hidden = true; checkoutDraftId = null; }
   document.getElementById("coCancel").addEventListener("click", closeCheckout);
   sheetBack.addEventListener("click", function (e) {
     if (e.target === sheetBack) closeCheckout();
@@ -759,6 +834,8 @@
 
   document.getElementById("checkoutForm").addEventListener("submit", function (e) {
     e.preventDefault();
+    var draft = trips.find(function (t) { return t.id === checkoutDraftId; });
+    if (!draft) { closeCheckout(); return; }
     var payer = document.getElementById("coPayer").value;
     var total = parseFloat(document.getElementById("coTotal").value);
     if (!payer || isNaN(total)) { toast("Payer and total are required"); return; }
@@ -766,12 +843,11 @@
     var receiptBlob = pendingReceiptBlob;
     var receiptPreview = pendingReceiptPreview;
 
-    // collect per-item personal assignments from the sheet
-    var assign = {}; // item_id -> {for_person, amount}
+    var assign = {};
     var badPersonal = false, personalSum = 0;
     document.querySelectorAll("#coItemRows .co-item").forEach(function (row) {
       var pid = row.querySelector("select").value;
-      if (!pid) return;
+      if (!pid) { assign[row.dataset.itemId] = { for_person: null, amount: null }; return; }
       var v = parseFloat(row.querySelector("input").value);
       if (isNaN(v) || v <= 0) { badPersonal = true; return; }
       assign[row.dataset.itemId] = { for_person: pid, amount: v };
@@ -779,19 +855,20 @@
     });
     if (badPersonal) { toast("Enter the price for each personal item"); return; }
     if (personalSum > total + 0.005) { toast("Personal amounts exceed the receipt total"); return; }
-    var ids = cartIds().filter(function (id) { return !isTmp(id); });
 
-    // instant: show the run + link its items locally, sync behind the scenes
-    var tmpTrip = {
-      id: tmpId(), day: selectedDay, payer: payer, total: total,
-      note: note, receipt_url: receiptPreview, created_at: new Date().toISOString()
-    };
-    trips.unshift(tmpTrip);
-    cartIds().forEach(function (id) {
-      var a = assign[id] || {};
-      runItems.push({ trip_id: tmpTrip.id, item_id: id, for_person: a.for_person || null, amount: a.amount || null });
+    // instant: finalize locally, sync behind the scenes
+    draft.status = "done";
+    draft.payer = payer;
+    draft.total = total;
+    draft.note = note;
+    if (receiptPreview) draft.receipt_url = receiptPreview;
+    runItems.forEach(function (l) {
+      if (l.trip_id !== draft.id) return;
+      var a = assign[l.item_id] || { for_person: null, amount: null };
+      l.for_person = a.for_person;
+      l.amount = a.amount;
     });
-    cart = {};
+    if (activeDraftId === draft.id) activeDraftId = null;
     closeCheckout();
     render();
     toast("Run saved: " + fmt(total) + " by " + personName(payer));
@@ -808,18 +885,18 @@
     }
 
     track(uploadStep.then(function (receiptUrl) {
-      return sb.from("trips").insert({
-        day: selectedDay, payer: payer, total: total,
-        note: note, receipt_url: receiptUrl
-      }).select().single();
+      return sb.from("trips").update({
+        status: "done", payer: payer, total: total, note: note, receipt_url: receiptUrl
+      }).eq("id", draft.id);
     }).then(function (r) {
       if (r.error) throw r.error;
-      if (!ids.length) { loadAll(); return; }
-      var links = ids.map(function (id) {
-        var a = assign[id] || {};
-        return { trip_id: r.data.id, item_id: id, for_person: a.for_person || null, amount: a.amount || null };
-      });
-      return Promise.resolve(sb.from("run_items").insert(links)).then(function (r2) {
+      var links = draftLinks(draft.id)
+        .filter(function (l) { return !isTmp(l.item_id); })
+        .map(function (l) {
+          return { trip_id: draft.id, item_id: l.item_id, for_person: l.for_person, amount: l.amount };
+        });
+      if (!links.length) { loadAll(); return; }
+      return Promise.resolve(sb.from("run_items").upsert(links)).then(function (r2) {
         if (r2.error) throw r2.error;
         loadAll();
       });
@@ -829,25 +906,13 @@
     }));
   });
 
-  // ── runs ──
-  function deleteTrip(t) {
-    trips = trips.filter(function (x) { return x.id !== t.id; });
-    runItems = runItems.filter(function (l) { return l.trip_id !== t.id; });
-    render();
-    toast("Run removed");
-    if (isTmp(t.id)) return;
-    track(sb.from("trips").delete().eq("id", t.id)).then(function (r) {
-      if (r.error) { fail(r.error, "Removing run"); loadAll(); }
-    });
-  }
-
   var viewer = document.getElementById("viewer");
   var viewerImg = document.getElementById("viewerImg");
   viewer.addEventListener("click", function () { viewer.hidden = true; viewerImg.src = ""; });
 
-  // ── computations ──
+  // ── computations (money counts checked-out runs only) ──
   function totalSpent() {
-    return trips.reduce(function (s, t) { return s + Number(t.total); }, 0);
+    return doneTrips().reduce(function (s, t) { return s + Number(t.total || 0); }, 0);
   }
   function dayTrips(day) {
     return trips.filter(function (t) { return t.day === day; });
@@ -861,8 +926,8 @@
   }
   function commonTotal() {
     var pbt = personalByTrip();
-    return trips.reduce(function (s, t) {
-      return s + Math.max(0, Number(t.total) - (pbt[t.id] || 0));
+    return doneTrips().reduce(function (s, t) {
+      return s + Math.max(0, Number(t.total || 0) - (pbt[t.id] || 0));
     }, 0);
   }
   function balances() {
@@ -870,11 +935,15 @@
     people.forEach(function (p) { map[p.id] = { person: p, paid: 0, personal: 0, balance: 0 }; });
     if (!people.length) return map;
     var share = commonTotal() / people.length;
-    trips.forEach(function (t) {
-      if (map[t.payer]) map[t.payer].paid += Number(t.total);
+    var doneIds = {};
+    doneTrips().forEach(function (t) {
+      doneIds[t.id] = true;
+      if (map[t.payer]) map[t.payer].paid += Number(t.total || 0);
     });
     runItems.forEach(function (l) {
-      if (l.for_person && l.amount && map[l.for_person]) map[l.for_person].personal += Number(l.amount);
+      if (doneIds[l.trip_id] && l.for_person && l.amount && map[l.for_person]) {
+        map[l.for_person].personal += Number(l.amount);
+      }
     });
     Object.keys(map).forEach(function (id) {
       map[id].balance = map[id].paid - share - map[id].personal;
@@ -904,23 +973,26 @@
 
   // ── render ──
   function render() {
-    var dt = dayTrips(selectedDay);
-    var daySpent = dt.reduce(function (s, t) { return s + Number(t.total); }, 0);
+    var dayDone = dayTrips(selectedDay).filter(function (t) { return t.status !== "draft"; });
+    var daySpent = dayDone.reduce(function (s, t) { return s + Number(t.total || 0); }, 0);
+    var dayDrafts = draftsFor(selectedDay);
 
     document.getElementById("statTotal").textContent = fmt(totalSpent());
     document.getElementById("statDayLabel").textContent = dayLabel(selectedDay);
     document.getElementById("statDay").textContent =
-      fmt(daySpent) + (dt.length ? " · " + dt.length + " run" + (dt.length === 1 ? "" : "s") : "");
+      fmt(daySpent) +
+      (dayDone.length ? " · " + dayDone.length + " run" + (dayDone.length === 1 ? "" : "s") : "") +
+      (dayDrafts.length ? " · " + dayDrafts.length + " open" : "");
     document.getElementById("statShare").textContent = people.length ? fmt(commonTotal() / people.length) : "—";
     document.getElementById("itemCount").textContent = "(" + items.length + ")";
     document.getElementById("peopleCount").textContent = "(" + people.length + ")";
 
     renderDays();
-    renderItems();
     renderTrips();
+    renderItems();
     renderPeople();
     renderBalances();
-    renderCart();
+    renderRunBar();
   }
 
   function renderDays() {
@@ -928,11 +1000,12 @@
     el.innerHTML = "";
     var today = todayStr();
     tripDays().forEach(function (day) {
-      var runs = dayTrips(day).length;
+      var runs = dayTrips(day).filter(function (t) { return t.status !== "draft"; }).length;
+      var drafts = draftsFor(day).length;
       var b = document.createElement("button");
       b.type = "button";
       b.className = "day-chip" + (day === selectedDay ? " active" : "") + (day === today ? " today" : "");
-      b.textContent = dayLabel(day) + (runs ? " · " + runs + "🧾" : "");
+      b.textContent = dayLabel(day) + (runs ? " · " + runs + "🧾" : "") + (drafts ? " ●" : "");
       b.addEventListener("click", function () {
         selectedDay = day;
         dayScrollPending = true;
@@ -947,14 +1020,142 @@
     }
   }
 
-  function renderCart() {
-    var n = cartIds().length;
+  function renderRunBar() {
     var bar = document.getElementById("cartBar");
+    var d = resolveActiveDraft();
+    var n = d ? draftLinks(d.id).length : 0;
     bar.hidden = !n;
     if (n) {
       document.getElementById("cartInfo").textContent =
-        "Run in progress · " + n + " item" + (n === 1 ? "" : "s");
+        "Run card · " + n + " item" + (n === 1 ? "" : "s");
     }
+  }
+
+  function renderTrips() {
+    var el = document.getElementById("tripList");
+    document.getElementById("runsHead").textContent = "Runs · " + dayLabel(selectedDay);
+    el.innerHTML = "";
+    var ds = draftsFor(selectedDay);
+    var act = resolveActiveDraft();
+
+    ds.forEach(function (t) {
+      var links = draftLinks(t.id);
+      var isActive = act && t.id === act.id;
+      var c = document.createElement("div");
+      c.className = "trip current";
+      c.innerHTML =
+        '<div class="top">' +
+          '<span class="avatar">🛒</span>' +
+          '<div class="who"><div class="payer">Run card — open' + (isActive ? " · adding here" : "") + '</div>' +
+          '<div class="meta">' + links.length + " item" + (links.length === 1 ? "" : "s") +
+            (t.created_at ? " · started " + timeLabel(t.created_at) : "") +
+            " · everyone sees this live</div></div>" +
+        '</div>' +
+        '<div class="run-chips"></div>' +
+        '<div class="trip-actions">' +
+          '<button class="btn small" data-act="go" type="button">Check out run →</button>' +
+          (!isActive && ds.length > 1 ? '<button class="btn ghost small" data-act="use" type="button">Add to this card</button>' : "") +
+          '<button class="btn ghost small" data-act="discard" type="button">Discard</button>' +
+        '</div>';
+      var chips = c.querySelector(".run-chips");
+      if (!links.length) {
+        var hint = document.createElement("span");
+        hint.className = "note";
+        hint.style.margin = "0";
+        hint.textContent = "Empty — hit ＋ on items below.";
+        chips.appendChild(hint);
+      }
+      links.forEach(function (l) {
+        var it = items.find(function (x) { return x.id === l.item_id; });
+        if (!it) return;
+        var ch = document.createElement("button");
+        ch.className = "run-chip"; ch.type = "button";
+        ch.textContent = it.name + " ✕";
+        ch.addEventListener("click", function () { removeFromDraft(t.id, l.item_id); });
+        chips.appendChild(ch);
+      });
+      c.querySelector('[data-act="go"]').addEventListener("click", function () { openCheckout(t); });
+      c.querySelector('[data-act="discard"]').addEventListener("click", function () { discardDraft(t); });
+      var useBtn = c.querySelector('[data-act="use"]');
+      if (useBtn) useBtn.addEventListener("click", function () {
+        activeDraftId = t.id;
+        render();
+      });
+      el.appendChild(c);
+    });
+
+    var dt = dayTrips(selectedDay).filter(function (t) { return t.status !== "draft"; });
+    if (!dt.length && !ds.length) {
+      el.innerHTML = '<div class="empty">No runs on ' + dayLabel(selectedDay) + ' yet — hit ＋ on an item below to open a run card.</div>';
+      return;
+    }
+    dt.forEach(function (t) {
+      var names = runItems.filter(function (l) { return l.trip_id === t.id; })
+        .map(function (l) {
+          var it = items.find(function (x) { return x.id === l.item_id; });
+          if (!it) return null;
+          if (l.for_person && l.amount) {
+            return it.name + " (" + personName(l.for_person) + " " + fmt(Number(l.amount)) + ")";
+          }
+          return it.name;
+        }).filter(Boolean);
+      var d = document.createElement("div");
+      d.className = "trip";
+      var pname = personName(t.payer);
+      var metaBits = [];
+      if (t.created_at) metaBits.push(timeLabel(t.created_at));
+      if (t.note) metaBits.push(t.note);
+      d.innerHTML =
+        '<div class="top">' +
+          '<span class="avatar">' + esc(initials(pname)) + '</span>' +
+          '<div class="who"><div class="payer">' + esc(pname) + '</div>' +
+          '<div class="meta">' + esc(metaBits.join(" · ")) + '</div></div>' +
+          (t.receipt_url ? '<img class="thumb" src="' + esc(t.receipt_url) + '" alt="Receipt">' : "") +
+          '<span class="total money">' + fmt(Number(t.total || 0)) + '</span>' +
+        '</div>' +
+        '<div class="items">' + (names.length ? esc(names.join(", ")) : "<em>no items linked</em>") + '</div>' +
+        '<div class="trip-actions">' +
+          '<button class="btn ghost small" data-act="edit" type="button">Edit</button>' +
+          '<button class="btn ghost small" data-act="del" type="button">Delete run</button>' +
+        '</div>';
+      if (t.receipt_url) {
+        d.querySelector(".thumb").addEventListener("click", function () {
+          viewerImg.src = t.receipt_url;
+          viewer.hidden = false;
+        });
+      }
+      d.querySelector('[data-act="del"]').addEventListener("click", function () { deleteTrip(t); });
+      d.querySelector('[data-act="edit"]').addEventListener("click", function () {
+        var actions = d.querySelector(".trip-actions");
+        if (actions.querySelector("select")) return;
+        actions.innerHTML = "";
+        var sel = document.createElement("select");
+        people.forEach(function (p) {
+          var o = document.createElement("option");
+          o.value = p.id; o.textContent = p.name;
+          if (p.id === t.payer) o.selected = true;
+          sel.appendChild(o);
+        });
+        var inp = document.createElement("input");
+        inp.type = "number"; inp.step = "0.01"; inp.min = "0";
+        inp.value = Number(t.total || 0).toFixed(2);
+        inp.style.width = "90px";
+        var ok = document.createElement("button");
+        ok.className = "btn small"; ok.type = "button"; ok.textContent = "Save";
+        ok.addEventListener("click", function () {
+          var v = parseFloat(inp.value);
+          if (isNaN(v)) { toast("Bad amount"); return; }
+          t.payer = sel.value; t.total = v;
+          render();
+          if (isTmp(t.id)) return;
+          track(sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id)).then(function (r) {
+            if (r.error) { fail(r.error, "Updating run"); loadAll(); }
+          });
+        });
+        actions.appendChild(sel); actions.appendChild(inp); actions.appendChild(ok);
+      });
+      el.appendChild(d);
+    });
   }
 
   function renderItems() {
@@ -964,20 +1165,25 @@
       el.innerHTML = '<div class="empty">The list is empty. Add items above.</div>';
       return;
     }
+    var m = itemInDraftMap();
+    var act = resolveActiveDraft();
     items.forEach(function (i) {
+      var draftId = m[i.id];
+      var inActive = !!(draftId && act && draftId === act.id);
+      var inOther = !!(draftId && !inActive);
       var d = document.createElement("div");
-      d.className = "item" + (cart[i.id] ? " selected" : "");
+      d.className = "item" + (inActive ? " selected" : "");
       d.setAttribute("role", "button");
       d.tabIndex = 0;
       d.innerHTML =
-        '<span class="check">' + (cart[i.id] ? "✓" : "＋") + '</span>' +
+        '<span class="check">' + (inActive ? "✓" : "＋") + '</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
+        (inOther ? '<span class="chip incard">on a card</span>' : "") +
         '<button class="icon-btn edit" data-act="edit" aria-label="Edit item">✎</button>' +
         '<button class="icon-btn danger" data-act="del" aria-label="Remove item">✕</button>';
       function toggle() {
         if (d.dataset.editing === "1") return;
-        if (cart[i.id]) delete cart[i.id]; else cart[i.id] = true;
-        render();
+        addItemToDraft(i);
       }
       d.addEventListener("click", function (e) {
         if (e.target.closest(".icon-btn") || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
@@ -1018,130 +1224,14 @@
       });
       d.querySelector('[data-act="del"]').addEventListener("click", function () {
         if (runItems.some(function (l) { return l.item_id === i.id; })) {
-          toast("Bought in a run — can't remove (edit it instead)"); return;
+          toast("Used in a run — can't remove (edit it instead)"); return;
         }
-        delete cart[i.id];
         items = items.filter(function (x) { return x.id !== i.id; });
         render();
         if (isTmp(i.id)) return;
         track(sb.from("items").delete().eq("id", i.id)).then(function (r) {
           if (r.error) { fail(r.error, "Removing item"); loadAll(); }
         });
-      });
-      el.appendChild(d);
-    });
-  }
-
-  function renderTrips() {
-    var el = document.getElementById("tripList");
-    document.getElementById("runsHead").textContent = "Runs · " + dayLabel(selectedDay);
-    el.innerHTML = "";
-    var dt = dayTrips(selectedDay);
-
-    // the run being built right now, as a first-class card
-    var ids = cartIds();
-    if (ids.length) {
-      var c = document.createElement("div");
-      c.className = "trip current";
-      c.innerHTML =
-        '<div class="top">' +
-          '<span class="avatar">🛒</span>' +
-          '<div class="who"><div class="payer">New run — in progress</div>' +
-          '<div class="meta">' + ids.length + " item" + (ids.length === 1 ? "" : "s") + " · tap an item to take it out</div></div>" +
-        '</div>' +
-        '<div class="run-chips"></div>' +
-        '<div class="trip-actions">' +
-          '<button class="btn small" data-act="go" type="button">Check out run →</button>' +
-          '<button class="btn ghost small" data-act="discard" type="button">Discard</button>' +
-        '</div>';
-      var chips = c.querySelector(".run-chips");
-      ids.forEach(function (id) {
-        var it = items.find(function (x) { return x.id === id; });
-        if (!it) return;
-        var ch = document.createElement("button");
-        ch.className = "run-chip"; ch.type = "button";
-        ch.textContent = it.name + " ✕";
-        ch.addEventListener("click", function () {
-          delete cart[id];
-          render();
-        });
-        chips.appendChild(ch);
-      });
-      c.querySelector('[data-act="go"]').addEventListener("click", openCheckout);
-      c.querySelector('[data-act="discard"]').addEventListener("click", function () {
-        cart = {}; render();
-      });
-      el.appendChild(c);
-    }
-
-    if (!dt.length && !ids.length) {
-      el.innerHTML = '<div class="empty">No runs on ' + dayLabel(selectedDay) + ' yet — add items to a run below (＋).</div>';
-      return;
-    }
-    dt.forEach(function (t) {
-      var names = runItems.filter(function (l) { return l.trip_id === t.id; })
-        .map(function (l) {
-          var it = items.find(function (x) { return x.id === l.item_id; });
-          if (!it) return null;
-          if (l.for_person && l.amount) {
-            return it.name + " (" + personName(l.for_person) + " " + fmt(Number(l.amount)) + ")";
-          }
-          return it.name;
-        }).filter(Boolean);
-      var d = document.createElement("div");
-      d.className = "trip";
-      var pname = personName(t.payer);
-      var metaBits = [];
-      if (t.created_at) metaBits.push(timeLabel(t.created_at));
-      if (t.note) metaBits.push(t.note);
-      d.innerHTML =
-        '<div class="top">' +
-          '<span class="avatar">' + esc(initials(pname)) + '</span>' +
-          '<div class="who"><div class="payer">' + esc(pname) + '</div>' +
-          '<div class="meta">' + esc(metaBits.join(" · ")) + '</div></div>' +
-          (t.receipt_url ? '<img class="thumb" src="' + esc(t.receipt_url) + '" alt="Receipt">' : "") +
-          '<span class="total money">' + fmt(Number(t.total)) + '</span>' +
-        '</div>' +
-        '<div class="items">' + (names.length ? esc(names.join(", ")) : "<em>no items linked</em>") + '</div>' +
-        '<div class="trip-actions">' +
-          '<button class="btn ghost small" data-act="edit" type="button">Edit</button>' +
-          '<button class="btn ghost small" data-act="del" type="button">Delete run</button>' +
-        '</div>';
-      if (t.receipt_url) {
-        d.querySelector(".thumb").addEventListener("click", function () {
-          viewerImg.src = t.receipt_url;
-          viewer.hidden = false;
-        });
-      }
-      d.querySelector('[data-act="del"]').addEventListener("click", function () { deleteTrip(t); });
-      d.querySelector('[data-act="edit"]').addEventListener("click", function () {
-        var actions = d.querySelector(".trip-actions");
-        if (actions.querySelector("select")) return;
-        actions.innerHTML = "";
-        var sel = document.createElement("select");
-        people.forEach(function (p) {
-          var o = document.createElement("option");
-          o.value = p.id; o.textContent = p.name;
-          if (p.id === t.payer) o.selected = true;
-          sel.appendChild(o);
-        });
-        var inp = document.createElement("input");
-        inp.type = "number"; inp.step = "0.01"; inp.min = "0";
-        inp.value = Number(t.total).toFixed(2);
-        inp.style.width = "90px";
-        var ok = document.createElement("button");
-        ok.className = "btn small"; ok.type = "button"; ok.textContent = "Save";
-        ok.addEventListener("click", function () {
-          var v = parseFloat(inp.value);
-          if (isNaN(v)) { toast("Bad amount"); return; }
-          t.payer = sel.value; t.total = v;
-          render();
-          if (isTmp(t.id)) return;
-          track(sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id)).then(function (r) {
-            if (r.error) { fail(r.error, "Updating run"); loadAll(); }
-          });
-        });
-        actions.appendChild(sel); actions.appendChild(inp); actions.appendChild(ok);
       });
       el.appendChild(d);
     });
@@ -1183,8 +1273,8 @@
     var el = document.getElementById("balanceList");
     var sl = document.getElementById("settleList");
     el.innerHTML = ""; sl.innerHTML = "";
-    if (!people.length || !trips.length) {
-      el.innerHTML = '<div class="empty">Balances appear once shopping runs are logged.</div>';
+    if (!people.length || !doneTrips().length) {
+      el.innerHTML = '<div class="empty">Balances appear once shopping runs are checked out.</div>';
       sl.innerHTML = '<div class="empty">Nothing to settle yet.</div>';
       return;
     }
@@ -1227,7 +1317,7 @@
   // ── CSV export ──
   document.getElementById("exportCsv").addEventListener("click", function () {
     var rows = [["day", "payer", "total", "note", "items", "personal", "receipt"]];
-    trips.slice().sort(function (a, b) { return String(a.day).localeCompare(String(b.day)); }).forEach(function (t) {
+    doneTrips().slice().sort(function (a, b) { return String(a.day).localeCompare(String(b.day)); }).forEach(function (t) {
       var links = runItems.filter(function (l) { return l.trip_id === t.id; });
       var names = links.map(function (l) {
         var it = items.find(function (x) { return x.id === l.item_id; });
@@ -1238,7 +1328,7 @@
           var it = items.find(function (x) { return x.id === l.item_id; });
           return (it ? it.name : "?") + "=" + personName(l.for_person) + ":" + Number(l.amount).toFixed(2);
         }).join("; ");
-      rows.push([t.day, personName(t.payer), Number(t.total).toFixed(2), t.note || "", names, personal, t.receipt_url || ""]);
+      rows.push([t.day, personName(t.payer), Number(t.total || 0).toFixed(2), t.note || "", names, personal, t.receipt_url || ""]);
     });
     var csv = rows.map(function (r) {
       return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(",");
