@@ -252,6 +252,15 @@
     background: var(--accent-soft); color: var(--accent);
     border: none; border-radius: 99px; padding: 4px 10px;
   }
+  .run-chip.pending { opacity: 0.65; cursor: default; }
+  .spin {
+    display: inline-block; width: 11px; height: 11px;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; vertical-align: -1px;
+    animation: rot 0.7s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 1.8s; } }
 
   .bal-row {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -545,6 +554,56 @@
     runItems.forEach(function (l) { if (dm[l.trip_id]) m[l.item_id] = l.trip_id; });
     return m;
   }
+  function draftNumber(id) {
+    var t = trips.find(function (x) { return x.id === id; });
+    if (!t) return 0;
+    var asc = draftsFor(t.day).slice().sort(function (a, b) {
+      return String(a.created_at).localeCompare(String(b.created_at));
+    });
+    return asc.findIndex(function (d) { return d.id === id; }) + 1;
+  }
+  // creating a card is optimistic too: it shows instantly with an "opening…" spinner,
+  // and any items added meanwhile queue up and sync once the card has a real id.
+  function createDraftOptimistic() {
+    var tmp = {
+      id: tmpId(), day: selectedDay, status: "draft", note: "",
+      payer: null, total: null, created_at: new Date().toISOString(), pending: true
+    };
+    trips.unshift(tmp);
+    activeDraftId = tmp.id;
+    var oldId = tmp.id;
+    track(sb.from("trips").insert({ day: tmp.day, status: "draft", note: "" }).select().single())
+      .then(function (r) {
+        if (r.error) {
+          trips = trips.filter(function (t) { return t !== tmp; });
+          runItems = runItems.filter(function (l) { return l.trip_id !== oldId; });
+          if (activeDraftId === oldId) activeDraftId = null;
+          render();
+          fail(r.error, "Starting run card");
+          return;
+        }
+        tmp.id = r.data.id;
+        tmp.created_at = r.data.created_at;
+        tmp.pending = false;
+        if (activeDraftId === oldId) activeDraftId = tmp.id;
+        runItems.forEach(function (l) { if (l.trip_id === oldId) l.trip_id = tmp.id; });
+        render();
+        runItems.filter(function (l) { return l.trip_id === tmp.id && l.pending; })
+          .forEach(function (l) { syncLink(tmp.id, l.item_id); });
+      });
+    return tmp;
+  }
+  function startNewCard() {
+    createDraftOptimistic();
+    render();
+  }
+  function syncLink(did, itemId) {
+    track(sb.from("run_items").insert({ trip_id: did, item_id: itemId })).then(function (r) {
+      if (r.error && r.error.code !== "23505") { fail(r.error, "Adding to run card"); loadAll(); return; }
+      var l = runItems.find(function (x) { return x.trip_id === did && x.item_id === itemId; });
+      if (l) { l.pending = false; render(); }
+    });
+  }
 
   // ── data ──
   function loadAll() {
@@ -672,38 +731,31 @@
   });
 
   // ── draft (run card) operations — all shared, all realtime ──
-  function ensureActiveDraft() {
-    var d = resolveActiveDraft();
-    if (d) return Promise.resolve(d.id);
-    return track(sb.from("trips").insert({ day: selectedDay, status: "draft", note: "" }).select().single())
-      .then(function (r) {
-        if (r.error) { fail(r.error, "Starting run card"); return null; }
-        trips.unshift(r.data);
-        activeDraftId = r.data.id;
-        render();
-        return r.data.id;
-      });
-  }
   function addItemToDraft(item) {
     if (isTmp(item.id)) { toast("Still saving that item — try again in a second"); return; }
     var m = itemInDraftMap();
     if (m[item.id]) {
-      var act = resolveActiveDraft();
-      if (act && m[item.id] === act.id) { removeFromDraft(act.id, item.id); return; }
-      toast("Already on a run card"); return;
+      var act0 = resolveActiveDraft();
+      if (act0 && m[item.id] === act0.id) {
+        var l0 = runItems.find(function (x) { return x.trip_id === act0.id && x.item_id === item.id; });
+        if (l0 && l0.pending) return; // still saving — ignore the double-tap
+        removeFromDraft(act0.id, item.id);
+        return;
+      }
+      var n = draftNumber(m[item.id]);
+      toast(n ? "Already on card " + n : "Already on another card"); return;
     }
-    ensureActiveDraft().then(function (did) {
-      if (!did) return;
-      runItems.push({ trip_id: did, item_id: item.id, for_person: null, amount: null });
-      render();
-      track(sb.from("run_items").insert({ trip_id: did, item_id: item.id })).then(function (r) {
-        if (r.error && r.error.code !== "23505") { fail(r.error, "Adding to run card"); loadAll(); }
-      });
-    });
+    var act = resolveActiveDraft();
+    if (!act) act = createDraftOptimistic();
+    runItems.push({ trip_id: act.id, item_id: item.id, for_person: null, amount: null, pending: true });
+    render();
+    if (!isTmp(act.id)) syncLink(act.id, item.id);
+    // if the card is still opening, createDraftOptimistic syncs this link once the real id lands
   }
   function removeFromDraft(draftId, itemId) {
     runItems = runItems.filter(function (l) { return !(l.trip_id === draftId && l.item_id === itemId); });
     render();
+    if (isTmp(draftId)) return;
     track(sb.from("run_items").delete().eq("trip_id", draftId).eq("item_id", itemId)).then(function (r) {
       if (r.error) { fail(r.error, "Removing from run card"); loadAll(); }
     });
@@ -741,10 +793,13 @@
   });
 
   function openCheckout(draft) {
+    if (isTmp(draft.id) || draft.pending) { toast("Card is still opening — one second"); return; }
+    var isDone = draft.status !== "draft";
     var links = draftLinks(draft.id);
-    if (!links.length) { toast("The run card is empty"); return; }
+    if (!links.length && !isDone) { toast("The run card is empty"); return; }
     checkoutDraftId = draft.id;
-    document.getElementById("coTitle").textContent = "Check out run · " + dayLabel(draft.day);
+    document.getElementById("coTitle").textContent =
+      (isDone ? "Edit run · " : "Check out run · ") + dayLabel(draft.day);
     var rowsEl = document.getElementById("coItemRows");
     rowsEl.innerHTML = "";
     links.forEach(function (l) {
@@ -784,13 +839,21 @@
     people.forEach(function (p) {
       var o = document.createElement("option");
       o.value = p.id; o.textContent = p.name;
+      if (draft.payer === p.id) o.selected = true;
       sel.appendChild(o);
     });
-    document.getElementById("coTotal").value = "";
-    document.getElementById("coNote").value = "";
+    document.getElementById("coTotal").value = draft.total != null ? Number(draft.total).toFixed(2) : "";
+    document.getElementById("coNote").value = draft.note || "";
     pendingReceiptBlob = null;
     pendingReceiptPreview = null;
-    receiptDrop.innerHTML = "📷 Snap or attach the receipt";
+    if (draft.receipt_url) {
+      receiptDrop.innerHTML = "";
+      var cur = document.createElement("img");
+      cur.src = draft.receipt_url; cur.alt = "Current receipt — tap to replace";
+      receiptDrop.appendChild(cur);
+    } else {
+      receiptDrop.innerHTML = "📷 Snap or attach the receipt";
+    }
     sheetBack.hidden = false;
     document.getElementById("coTotal").focus();
   }
@@ -857,6 +920,7 @@
     if (personalSum > total + 0.005) { toast("Personal amounts exceed the receipt total"); return; }
 
     // instant: finalize locally, sync behind the scenes
+    var wasDraft = draft.status === "draft";
     draft.status = "done";
     draft.payer = payer;
     draft.total = total;
@@ -871,7 +935,7 @@
     if (activeDraftId === draft.id) activeDraftId = null;
     closeCheckout();
     render();
-    toast("Run saved: " + fmt(total) + " by " + personName(payer));
+    toast((wasDraft ? "Run saved: " : "Run updated: ") + fmt(total) + " by " + personName(payer));
 
     var uploadStep = Promise.resolve(null);
     if (receiptBlob) {
@@ -885,9 +949,9 @@
     }
 
     track(uploadStep.then(function (receiptUrl) {
-      return sb.from("trips").update({
-        status: "done", payer: payer, total: total, note: note, receipt_url: receiptUrl
-      }).eq("id", draft.id);
+      var upd = { status: "done", payer: payer, total: total, note: note };
+      if (receiptUrl) upd.receipt_url = receiptUrl;   // keep the existing photo unless a new one was attached
+      return sb.from("trips").update(upd).eq("id", draft.id);
     }).then(function (r) {
       if (r.error) throw r.error;
       var links = draftLinks(draft.id)
@@ -1046,15 +1110,16 @@
       c.innerHTML =
         '<div class="top">' +
           '<span class="avatar">🛒</span>' +
-          '<div class="who"><div class="payer">Run card — open' + (isActive ? " · adding here" : "") + '</div>' +
+          '<div class="who"><div class="payer">Run card ' + draftNumber(t.id) + ' — open' + (isActive ? " · adding here" : "") +
+            (t.pending ? ' <span class="spin" aria-label="opening"></span>' : "") + '</div>' +
           '<div class="meta">' + links.length + " item" + (links.length === 1 ? "" : "s") +
-            (t.created_at ? " · started " + timeLabel(t.created_at) : "") +
+            (t.pending ? " · opening…" : (t.created_at ? " · started " + timeLabel(t.created_at) : "")) +
             " · everyone sees this live</div></div>" +
         '</div>' +
         '<div class="run-chips"></div>' +
         '<div class="trip-actions">' +
           '<button class="btn small" data-act="go" type="button">Check out run →</button>' +
-          (!isActive && ds.length > 1 ? '<button class="btn ghost small" data-act="use" type="button">Add to this card</button>' : "") +
+          (!isActive ? '<button class="btn ghost small" data-act="use" type="button">Add to this card</button>' : "") +
           '<button class="btn ghost small" data-act="discard" type="button">Discard</button>' +
         '</div>';
       var chips = c.querySelector(".run-chips");
@@ -1069,9 +1134,17 @@
         var it = items.find(function (x) { return x.id === l.item_id; });
         if (!it) return;
         var ch = document.createElement("button");
-        ch.className = "run-chip"; ch.type = "button";
-        ch.textContent = it.name + " ✕";
-        ch.addEventListener("click", function () { removeFromDraft(t.id, l.item_id); });
+        ch.className = "run-chip" + (l.pending ? " pending" : "");
+        ch.type = "button";
+        if (l.pending) {
+          ch.textContent = it.name + " ";
+          var sp = document.createElement("span");
+          sp.className = "spin";
+          ch.appendChild(sp);
+        } else {
+          ch.textContent = it.name + " ✕";
+          ch.addEventListener("click", function () { removeFromDraft(t.id, l.item_id); });
+        }
         chips.appendChild(ch);
       });
       c.querySelector('[data-act="go"]').addEventListener("click", function () { openCheckout(t); });
@@ -1083,6 +1156,16 @@
       });
       el.appendChild(c);
     });
+
+    if (ds.length) {
+      var more = document.createElement("button");
+      more.className = "btn ghost small";
+      more.type = "button";
+      more.textContent = "＋ Start another card";
+      more.style.alignSelf = "flex-start";
+      more.addEventListener("click", startNewCard);
+      el.appendChild(more);
+    }
 
     var dt = dayTrips(selectedDay).filter(function (t) { return t.status !== "draft"; });
     if (!dt.length && !ds.length) {
@@ -1125,35 +1208,7 @@
         });
       }
       d.querySelector('[data-act="del"]').addEventListener("click", function () { deleteTrip(t); });
-      d.querySelector('[data-act="edit"]').addEventListener("click", function () {
-        var actions = d.querySelector(".trip-actions");
-        if (actions.querySelector("select")) return;
-        actions.innerHTML = "";
-        var sel = document.createElement("select");
-        people.forEach(function (p) {
-          var o = document.createElement("option");
-          o.value = p.id; o.textContent = p.name;
-          if (p.id === t.payer) o.selected = true;
-          sel.appendChild(o);
-        });
-        var inp = document.createElement("input");
-        inp.type = "number"; inp.step = "0.01"; inp.min = "0";
-        inp.value = Number(t.total || 0).toFixed(2);
-        inp.style.width = "90px";
-        var ok = document.createElement("button");
-        ok.className = "btn small"; ok.type = "button"; ok.textContent = "Save";
-        ok.addEventListener("click", function () {
-          var v = parseFloat(inp.value);
-          if (isNaN(v)) { toast("Bad amount"); return; }
-          t.payer = sel.value; t.total = v;
-          render();
-          if (isTmp(t.id)) return;
-          track(sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id)).then(function (r) {
-            if (r.error) { fail(r.error, "Updating run"); loadAll(); }
-          });
-        });
-        actions.appendChild(sel); actions.appendChild(inp); actions.appendChild(ok);
-      });
+      d.querySelector('[data-act="edit"]').addEventListener("click", function () { openCheckout(t); });
       el.appendChild(d);
     });
   }
@@ -1175,10 +1230,12 @@
       d.className = "item" + (inActive ? " selected" : "");
       d.setAttribute("role", "button");
       d.tabIndex = 0;
+      var otherNum = inOther ? draftNumber(draftId) : 0;
       d.innerHTML =
         '<span class="check">' + (inActive ? "✓" : "＋") + '</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
-        (inOther ? '<span class="chip incard">on a card</span>' : "") +
+        (inActive ? '<span class="chip bought">on this card</span>' : "") +
+        (inOther ? '<span class="chip incard">on card ' + (otherNum || "?") + '</span>' : "") +
         '<button class="icon-btn edit" data-act="edit" aria-label="Edit item">✎</button>' +
         '<button class="icon-btn danger" data-act="del" aria-label="Remove item">✕</button>';
       function toggle() {
