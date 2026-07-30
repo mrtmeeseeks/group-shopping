@@ -160,9 +160,9 @@
   }
   .item.selected .check { background: var(--accent); border-color: var(--accent); }
   .item .name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
-  .item .meta { font-size: 0.78rem; color: var(--ink-soft); flex-shrink: 0; }
-  .item.done { cursor: default; }
-  .item.done .name { color: var(--ink-soft); }
+  .item .meta { font-size: 0.75rem; color: var(--ink-soft); flex-shrink: 0; }
+  .item.done { background: transparent; }
+  .item.done .name { color: var(--ink-soft); font-weight: 500; }
 
   .chip {
     display: inline-block; font-size: 0.7rem; font-weight: 600;
@@ -286,7 +286,8 @@
     background: none; border: none; cursor: pointer; color: var(--ink-soft);
     font-size: 1rem; padding: 4px 6px; border-radius: 6px; flex-shrink: 0;
   }
-  .icon-btn:hover { color: var(--debit); }
+  .icon-btn.danger:hover { color: var(--debit); }
+  .icon-btn.edit:hover { color: var(--accent); }
 
   .viewer {
     position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
@@ -302,8 +303,7 @@
     .stat { padding: 8px 9px; }
     .stat .value { font-size: 0.95rem; }
     .stat .label { font-size: 0.6rem; }
-    .item { padding: 9px 10px; flex-wrap: wrap; }
-    .item .name { min-width: 55%; }
+    .item { padding: 9px 10px; }
     .sheet .row { flex-direction: column; }
     .trip .total { font-size: 0.95rem; }
     .toolbar .btn { flex: 1; }
@@ -322,8 +322,7 @@
 <div id="setupScreen" class="setup" hidden>
   <h1>⚙️ Not configured yet</h1>
   <p>This page needs a Supabase project behind it. Open <code>index.html</code> and fill in
-  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> at the top of the script,
-  after running <code>schema.sql</code> in the Supabase SQL editor. See <code>README.md</code>.</p>
+  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> at the top of the script.</p>
 </div>
 
 <div class="wrap" id="app" hidden>
@@ -343,29 +342,19 @@
 
   <div class="stats">
     <div class="stat"><div class="label">Total spent</div><div class="value money" id="statTotal">—</div></div>
-    <div class="stat"><div class="label" id="statOpenLabel">To buy</div><div class="value pending-c num" id="statOpen">—</div></div>
+    <div class="stat"><div class="label" id="statDayLabel">This day</div><div class="value pending-c money" id="statDay">—</div></div>
     <div class="stat"><div class="label">Per person</div><div class="value money" id="statShare">—</div></div>
   </div>
 
   <section id="tab-list">
     <div class="day-strip" id="dayStrip"></div>
     <form class="add-row" id="addItemForm">
-      <input type="text" id="newItemName" placeholder="Add item… e.g. Olive oil ×2" aria-label="New item" required>
+      <input type="text" id="newItemName" placeholder="Add item to the list…" aria-label="New item" required>
       <button class="btn" type="submit">Add</button>
     </form>
-    <div class="toolbar">
-      <button class="btn ghost small" id="selectAllBtn" type="button">Select all</button>
-      <button class="btn ghost small" id="copyDayBtn" type="button">Copy items from another day…</button>
-    </div>
-    <div class="add-row" id="copyDayForm" hidden>
-      <select id="copySrcDay" aria-label="Source day" style="flex:1;"></select>
-      <button class="btn" id="copyDayGo" type="button">Copy</button>
-    </div>
-    <p class="note">Tap items to put them in the cart, then <strong>Check out</strong> — one payer and one receipt total per shopping run. Multiple runs a day are fine.</p>
-    <h2>To buy <span class="count" id="openCount"></span></h2>
-    <div class="card-list" id="openList"></div>
-    <h2>Bought this day <span class="count" id="boughtCount"></span></h2>
-    <div class="card-list" id="boughtList"></div>
+    <p class="note">One shared list. Tap items to put them in the cart, then <strong>Check out</strong> a run — who paid + receipt total. Items stay on the list for the next run; ✓ marks what's already bought on the selected day.</p>
+    <h2>Shopping list <span class="count" id="itemCount"></span></h2>
+    <div class="card-list" id="itemList"></div>
   </section>
 
   <section id="tab-ledger" hidden>
@@ -402,7 +391,7 @@
 
 <div class="sheet-back" id="sheetBack" hidden>
   <form class="sheet" id="checkoutForm">
-    <h3>Log this shopping run</h3>
+    <h3 id="coTitle">Log this shopping run</h3>
     <p class="items-note" id="coItems"></p>
     <div class="row">
       <div class="field">
@@ -445,10 +434,8 @@
 (function () {
   "use strict";
 
-  // ── Fill these two in (Supabase Dashboard → Project Settings → API) ──────
   var SUPABASE_URL = "https://zsigxsuamrvvnbzgyrhg.supabase.co";
   var SUPABASE_ANON_KEY = "sb_publishable_sITh56LJDR-3d7eUPbCBDQ_xR-3ykA3";
-  // ─────────────────────────────────────────────────────────────────────────
 
   if (SUPABASE_URL.indexOf("http") !== 0) {
     document.getElementById("setupScreen").hidden = false;
@@ -489,8 +476,9 @@
   }
 
   var people = [];
-  var items = [];
-  var trips = [];
+  var items = [];      // the one shared, permanent list
+  var trips = [];      // shopping runs (day, payer, total, receipt)
+  var runItems = [];   // links: which items were bought in which run
   var currency = localStorage.getItem("gs-currency") || "€";
   var cart = {};
   var pendingReceiptBlob = null;
@@ -527,85 +515,25 @@
   }
   function cartIds() { return Object.keys(cart); }
 
-  // ── seed data (first boot on an empty database) ──
-  var STARTER = [
-    "Meats for the oven (meatballs/steaks) ~2.5kg",
-    "Bread ×4",
-    "Feta cheese 1kg",
-    "Eggs ×40",
-    "Milk large ×2",
-    "Plant-based milk ×1",
-    "Cereal ×1 pack",
-    "Oats ×1 pack",
-    "Cream cheese ×2 packs",
-    "Sliced meats assorted ×6",
-    "Sliced yellow cheese/gouda ×4 packs",
-    "Spread (lyutenitsa/eggplant) 2–3 jars",
-    "Spicy peppers (jar)",
-    "Potatoes 4kg",
-    "Salad bags ×3",
-    "Cucumbers 1.5kg",
-    "Dill",
-    "Garlic & onion",
-    "Bananas 2kg",
-    "Greek yoghurt ×6",
-    "Seasoning (paprika, garlic)",
-    "Olive oil",
-    "Water 6-pack ×2",
-    "Soda water ×1 pack",
-    "Cola Zero (a few bottles)",
-    "Nespresso pods (regular + decaf)",
-    "Ground coffee ×1 pack",
-    "Ice creams ×12+",
-    "Kinder Pingui",
-    "Ice ×4 bags",
-    "Paper towels",
-    "Toilet paper",
-    "Olives"
-  ];
-  var ROSTER = [
-    "Taulant", "Lilyana", "Mitaka", "Antonio", "Bunny",
-    "Kristiyan Stanev", "Velly", "Tsvetomir", "Dilyan Zhelezarski",
-    "Stefan Pantev", "Ama", "Dulev", "Lyubomir Nikolov", "Ico Manolov", "Milena"
-  ];
-  var seedTried = false;
-  function maybeSeed() {
-    if (seedTried) return Promise.resolve();
-    seedTried = true;
-    var jobs = [];
-    if (!people.length) {
-      jobs.push(sb.from("people").insert(ROSTER.map(function (n) { return { name: n }; })));
-    }
-    if (!items.length && !trips.length) {
-      jobs.push(sb.from("items").insert(STARTER.map(function (n) {
-        return { name: n, day: TRIP_START, status: "open" };
-      })));
-    }
-    if (!jobs.length) return Promise.resolve();
-    return Promise.all(jobs).then(function (rs) {
-      rs.forEach(function (r) { if (r.error) fail(r.error, "Seeding"); });
-      return loadAll(true);
-    });
-  }
-
   // ── data ──
-  function loadAll(skipSeed) {
+  function loadAll() {
     if (pendingOps > 0) {
       clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(function () { loadAll(skipSeed); }, 300);
+      reloadTimer = setTimeout(function () { loadAll(); }, 300);
       return Promise.resolve();
     }
     return Promise.all([
       sb.from("people").select("*").order("created_at"),
-      sb.from("items").select("*").order("created_at", { ascending: false }),
-      sb.from("trips").select("*").order("created_at", { ascending: false })
+      sb.from("items").select("*").order("created_at"),
+      sb.from("trips").select("*").order("created_at", { ascending: false }),
+      sb.from("run_items").select("*")
     ]).then(function (res) {
-      for (var k = 0; k < 3; k++) { if (res[k].error) throw res[k].error; }
+      for (var k = 0; k < 4; k++) { if (res[k].error) throw res[k].error; }
       people = res[0].data;
       items = res[1].data;
       trips = res[2].data;
+      runItems = res[3].data;
       render();
-      if (!skipSeed) return maybeSeed();
     }).catch(function (err) { fail(err, "Loading"); });
   }
 
@@ -636,11 +564,13 @@
     return p;
   }
   function tmpId() { return "tmp-" + Math.random().toString(36).slice(2, 10); }
+  function isTmp(id) { return String(id).indexOf("tmp-") === 0; }
 
   sb.channel("room")
     .on("postgres_changes", { event: "*", schema: "public", table: "items" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "people" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "run_items" }, scheduleReload)
     .subscribe(function (status) {
       rtOn = status === "SUBSCRIBED";
       setBadge();
@@ -674,11 +604,14 @@
     var inp = document.getElementById("newItemName");
     var name = inp.value.trim();
     if (!name) return;
+    if (items.some(function (i) { return i.name.toLowerCase() === name.toLowerCase(); })) {
+      toast("Already on the list"); return;
+    }
     inp.value = "";
-    var tmp = { id: tmpId(), name: name, day: selectedDay, status: "open", trip_id: null };
-    items.unshift(tmp);
+    var tmp = { id: tmpId(), name: name };
+    items.push(tmp);
     render();
-    track(sb.from("items").insert({ name: name, day: selectedDay, status: "open" })).then(function (r) {
+    track(sb.from("items").insert({ name: name, day: todayStr(), status: "open" })).then(function (r) {
       if (r.error) {
         items = items.filter(function (x) { return x !== tmp; });
         render();
@@ -707,68 +640,6 @@
     });
   });
 
-  // ── select all / copy day ──
-  document.getElementById("selectAllBtn").addEventListener("click", function () {
-    var open = items.filter(function (i) { return i.status === "open" && i.day === selectedDay; });
-    var allSelected = open.length && open.every(function (i) { return cart[i.id]; });
-    open.forEach(function (i) {
-      if (allSelected) delete cart[i.id]; else cart[i.id] = true;
-    });
-    render();
-  });
-
-  var copyForm = document.getElementById("copyDayForm");
-  document.getElementById("copyDayBtn").addEventListener("click", function () {
-    copyForm.hidden = !copyForm.hidden;
-    if (copyForm.hidden) return;
-    var sel = document.getElementById("copySrcDay");
-    sel.innerHTML = "";
-    tripDays().forEach(function (day) {
-      if (day === selectedDay) return;
-      var count = items.filter(function (i) { return i.day === day; }).length;
-      if (!count) return;
-      var o = document.createElement("option");
-      o.value = day;
-      o.textContent = dayLabel(day) + " — " + count + " item" + (count === 1 ? "" : "s");
-      sel.appendChild(o);
-    });
-    if (!sel.options.length) {
-      var o2 = document.createElement("option");
-      o2.value = ""; o2.textContent = "No other day has items";
-      sel.appendChild(o2);
-    }
-  });
-  document.getElementById("copyDayGo").addEventListener("click", function () {
-    var src = document.getElementById("copySrcDay").value;
-    if (!src) return;
-    var existing = {};
-    items.forEach(function (i) {
-      if (i.day === selectedDay && i.status === "open") existing[i.name.toLowerCase()] = true;
-    });
-    var toAdd = [];
-    items.filter(function (i) { return i.day === src; }).forEach(function (i) {
-      if (!existing[i.name.toLowerCase()]) {
-        existing[i.name.toLowerCase()] = true;
-        toAdd.push({ name: i.name, day: selectedDay, status: "open" });
-      }
-    });
-    copyForm.hidden = true;
-    if (!toAdd.length) { toast("Nothing new to copy"); return; }
-    var tmps = toAdd.map(function (a) {
-      return { id: tmpId(), name: a.name, day: a.day, status: "open", trip_id: null };
-    });
-    items = tmps.concat(items);
-    render();
-    toast("Copied " + toAdd.length + " item" + (toAdd.length === 1 ? "" : "s"));
-    track(sb.from("items").insert(toAdd)).then(function (r) {
-      if (r.error) {
-        items = items.filter(function (x) { return tmps.indexOf(x) === -1; });
-        render();
-        fail(r.error, "Copying");
-      } else loadAll();
-    });
-  });
-
   // ── cart / checkout ──
   document.getElementById("cartClear").addEventListener("click", function () {
     cart = {}; render();
@@ -786,6 +657,7 @@
       var it = items.find(function (x) { return x.id === id; });
       return it ? it.name : "";
     }).filter(Boolean);
+    document.getElementById("coTitle").textContent = "Log run · " + dayLabel(selectedDay);
     document.getElementById("coItems").textContent =
       names.length + " item" + (names.length === 1 ? "" : "s") + ": " + names.join(", ");
     var sel = document.getElementById("coPayer");
@@ -800,7 +672,6 @@
     pendingReceiptBlob = null;
     pendingReceiptPreview = null;
     receiptDrop.innerHTML = "📷 Snap or attach the receipt";
-    document.getElementById("coSave").disabled = false;
     sheetBack.hidden = false;
     document.getElementById("coTotal").focus();
   }
@@ -848,19 +719,18 @@
     var total = parseFloat(document.getElementById("coTotal").value);
     if (!payer || isNaN(total)) { toast("Payer and total are required"); return; }
     var note = document.getElementById("coNote").value.trim();
-    var ids = cartIds().filter(function (id) { return String(id).indexOf("tmp-") !== 0; });
+    var ids = cartIds().filter(function (id) { return !isTmp(id); });
     var receiptBlob = pendingReceiptBlob;
     var receiptPreview = pendingReceiptPreview;
 
-    // instant: show the run and tick the items locally, then sync behind the scenes
+    // instant: show the run + link its items locally, sync behind the scenes
     var tmpTrip = {
       id: tmpId(), day: selectedDay, payer: payer, total: total,
       note: note, receipt_url: receiptPreview, created_at: new Date().toISOString()
     };
     trips.unshift(tmpTrip);
     cartIds().forEach(function (id) {
-      var it = items.find(function (x) { return x.id === id; });
-      if (it) { it.status = "bought"; it.trip_id = tmpTrip.id; }
+      runItems.push({ trip_id: tmpTrip.id, item_id: id });
     });
     cart = {};
     closeCheckout();
@@ -886,38 +756,27 @@
     }).then(function (r) {
       if (r.error) throw r.error;
       if (!ids.length) { loadAll(); return; }
-      return Promise.resolve(sb.from("items")
-        .update({ status: "bought", trip_id: r.data.id })
-        .in("id", ids))
-        .then(function (r2) {
-          if (r2.error) throw r2.error;
-          loadAll();
-        });
+      var links = ids.map(function (id) { return { trip_id: r.data.id, item_id: id }; });
+      return Promise.resolve(sb.from("run_items").insert(links)).then(function (r2) {
+        if (r2.error) throw r2.error;
+        loadAll();
+      });
     }).catch(function (err) {
       fail(err, "Saving run");
       loadAll();
     }));
   });
 
-  // ── trips ──
+  // ── runs ──
   function deleteTrip(t) {
-    items.forEach(function (i) {
-      if (i.trip_id === t.id) { i.status = "open"; i.trip_id = null; }
-    });
     trips = trips.filter(function (x) { return x.id !== t.id; });
+    runItems = runItems.filter(function (l) { return l.trip_id !== t.id; });
     render();
-    toast("Run removed — items are back on the list");
-    if (String(t.id).indexOf("tmp-") === 0) return;
-    track(Promise.resolve(sb.from("items").update({ status: "open", trip_id: null }).eq("trip_id", t.id))
-      .then(function (r) {
-        if (r.error) throw r.error;
-        return sb.from("trips").delete().eq("id", t.id);
-      })
-      .then(function (r) {
-        if (r.error) throw r.error;
-        loadAll();
-      })
-      .catch(function (err) { fail(err, "Removing run"); loadAll(); }));
+    toast("Run removed");
+    if (isTmp(t.id)) return;
+    track(sb.from("trips").delete().eq("id", t.id)).then(function (r) {
+      if (r.error) { fail(r.error, "Removing run"); loadAll(); }
+    });
   }
 
   var viewer = document.getElementById("viewer");
@@ -927,6 +786,19 @@
   // ── computations ──
   function totalSpent() {
     return trips.reduce(function (s, t) { return s + Number(t.total); }, 0);
+  }
+  function dayTrips(day) {
+    return trips.filter(function (t) { return t.day === day; });
+  }
+  function boughtMapFor(day) {
+    // item_id -> trip (the run it was bought in on that day)
+    var map = {};
+    var dt = {};
+    dayTrips(day).forEach(function (t) { dt[t.id] = t; });
+    runItems.forEach(function (l) {
+      if (dt[l.trip_id]) map[l.item_id] = dt[l.trip_id];
+    });
+    return map;
   }
   function balances() {
     var map = {};
@@ -964,20 +836,19 @@
 
   // ── render ──
   function render() {
-    var open = items.filter(function (i) { return i.status === "open" && i.day === selectedDay; });
-    var bought = items.filter(function (i) { return i.status === "bought" && i.day === selectedDay; });
+    var dt = dayTrips(selectedDay);
+    var daySpent = dt.reduce(function (s, t) { return s + Number(t.total); }, 0);
 
     document.getElementById("statTotal").textContent = fmt(totalSpent());
-    document.getElementById("statOpenLabel").textContent = "To buy · " + dayLabel(selectedDay);
-    document.getElementById("statOpen").textContent = open.length + " item" + (open.length === 1 ? "" : "s");
+    document.getElementById("statDayLabel").textContent = dayLabel(selectedDay);
+    document.getElementById("statDay").textContent =
+      fmt(daySpent) + (dt.length ? " · " + dt.length + " run" + (dt.length === 1 ? "" : "s") : "");
     document.getElementById("statShare").textContent = people.length ? fmt(totalSpent() / people.length) : "—";
-    document.getElementById("openCount").textContent = "(" + open.length + ")";
-    document.getElementById("boughtCount").textContent = "(" + bought.length + ")";
+    document.getElementById("itemCount").textContent = "(" + items.length + ")";
     document.getElementById("peopleCount").textContent = "(" + people.length + ")";
 
     renderDays();
-    renderOpen(open);
-    renderBought(bought);
+    renderItems();
     renderTrips();
     renderPeople();
     renderBalances();
@@ -989,14 +860,13 @@
     el.innerHTML = "";
     var today = todayStr();
     tripDays().forEach(function (day) {
-      var open = items.filter(function (i) { return i.day === day && i.status === "open"; }).length;
+      var runs = dayTrips(day).length;
       var b = document.createElement("button");
       b.type = "button";
       b.className = "day-chip" + (day === selectedDay ? " active" : "") + (day === today ? " today" : "");
-      b.textContent = dayLabel(day) + (open ? " · " + open : "");
+      b.textContent = dayLabel(day) + (runs ? " · " + runs + "🧾" : "");
       b.addEventListener("click", function () {
         selectedDay = day;
-        copyForm.hidden = true;
         render();
       });
       el.appendChild(b);
@@ -1015,73 +885,82 @@
     }
   }
 
-  function renderOpen(open) {
-    var el = document.getElementById("openList");
+  function renderItems() {
+    var el = document.getElementById("itemList");
     el.innerHTML = "";
-    if (!open.length) {
-      el.innerHTML = '<div class="empty">Nothing to buy this day. Add items above, or copy from another day.</div>';
+    if (!items.length) {
+      el.innerHTML = '<div class="empty">The list is empty. Add items above.</div>';
       return;
     }
-    open.forEach(function (i) {
+    var bought = boughtMapFor(selectedDay);
+    var sorted = items.slice().sort(function (a, b) {
+      var ab = bought[a.id] ? 1 : 0, bb = bought[b.id] ? 1 : 0;
+      return ab - bb;
+    });
+    sorted.forEach(function (i) {
+      var t = bought[i.id];
       var d = document.createElement("div");
-      d.className = "item" + (cart[i.id] ? " selected" : "");
+      d.className = "item" + (cart[i.id] ? " selected" : "") + (t ? " done" : "");
       d.setAttribute("role", "button");
       d.tabIndex = 0;
       d.innerHTML =
         '<span class="check">' + (cart[i.id] ? "✓" : "") + '</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
-        '<button class="icon-btn" data-act="del" aria-label="Remove item">✕</button>';
+        (t ? '<span class="chip bought">✓ ' + esc(personName(t.payer)) + '</span>' : "") +
+        '<button class="icon-btn edit" data-act="edit" aria-label="Edit item">✎</button>' +
+        '<button class="icon-btn danger" data-act="del" aria-label="Remove item">✕</button>';
       function toggle() {
+        if (d.dataset.editing === "1") return;
         if (cart[i.id]) delete cart[i.id]; else cart[i.id] = true;
         render();
       }
       d.addEventListener("click", function (e) {
-        if (e.target.closest('[data-act="del"]')) return;
+        if (e.target.closest(".icon-btn") || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
         toggle();
       });
       d.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+        if (d.dataset.editing === "1") return;
+        if ((e.key === "Enter" || e.key === " ") && e.target === d) { e.preventDefault(); toggle(); }
+      });
+      d.querySelector('[data-act="edit"]').addEventListener("click", function () {
+        if (d.dataset.editing === "1") return;
+        d.dataset.editing = "1";
+        d.innerHTML = "";
+        var inp = document.createElement("input");
+        inp.type = "text"; inp.value = i.name; inp.style.flex = "1";
+        var ok = document.createElement("button");
+        ok.className = "btn small"; ok.type = "button"; ok.textContent = "Save";
+        var no = document.createElement("button");
+        no.className = "btn ghost small"; no.type = "button"; no.textContent = "Cancel";
+        function saveEdit() {
+          var name = inp.value.trim();
+          if (!name || name === i.name) { render(); return; }
+          i.name = name;
+          render();
+          if (isTmp(i.id)) return;
+          track(sb.from("items").update({ name: name }).eq("id", i.id)).then(function (r) {
+            if (r.error) { fail(r.error, "Renaming item"); loadAll(); }
+          });
+        }
+        ok.addEventListener("click", saveEdit);
+        no.addEventListener("click", function () { render(); });
+        inp.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") { e.preventDefault(); saveEdit(); }
+          if (e.key === "Escape") render();
+        });
+        d.appendChild(inp); d.appendChild(ok); d.appendChild(no);
+        inp.focus(); inp.select();
       });
       d.querySelector('[data-act="del"]').addEventListener("click", function () {
+        if (runItems.some(function (l) { return l.item_id === i.id; })) {
+          toast("Bought in a run — can't remove (edit it instead)"); return;
+        }
         delete cart[i.id];
         items = items.filter(function (x) { return x.id !== i.id; });
         render();
-        if (String(i.id).indexOf("tmp-") === 0) return;
+        if (isTmp(i.id)) return;
         track(sb.from("items").delete().eq("id", i.id)).then(function (r) {
           if (r.error) { fail(r.error, "Removing item"); loadAll(); }
-        });
-      });
-      el.appendChild(d);
-    });
-  }
-
-  function renderBought(bought) {
-    var el = document.getElementById("boughtList");
-    el.innerHTML = "";
-    if (!bought.length) {
-      el.innerHTML = '<div class="empty">Nothing bought yet this day.</div>';
-      return;
-    }
-    bought.forEach(function (i) {
-      var t = trips.find(function (x) { return x.id === i.trip_id; });
-      var d = document.createElement("div");
-      d.className = "item done";
-      d.innerHTML =
-        '<span class="chip bought">✓</span>' +
-        '<span class="name">' + esc(i.name) + '</span>' +
-        '<span class="meta">' + (t ? esc(personName(t.payer)) + (t.note ? " · " + esc(t.note) : "") : "") + '</span>' +
-        '<button class="btn small ghost" data-act="again" type="button">Buy again</button>';
-      d.querySelector('[data-act="again"]').addEventListener("click", function () {
-        var tmp = { id: tmpId(), name: i.name, day: selectedDay, status: "open", trip_id: null };
-        items.unshift(tmp);
-        render();
-        toast('"' + i.name + '" is back on the list');
-        track(sb.from("items").insert({ name: i.name, day: selectedDay, status: "open" })).then(function (r) {
-          if (r.error) {
-            items = items.filter(function (x) { return x !== tmp; });
-            render();
-            fail(r.error, "Re-adding item");
-          } else loadAll();
         });
       });
       el.appendChild(d);
@@ -1096,7 +975,11 @@
       return;
     }
     trips.forEach(function (t) {
-      var its = items.filter(function (i) { return i.trip_id === t.id; });
+      var names = runItems.filter(function (l) { return l.trip_id === t.id; })
+        .map(function (l) {
+          var it = items.find(function (x) { return x.id === l.item_id; });
+          return it ? it.name : null;
+        }).filter(Boolean);
       var d = document.createElement("div");
       d.className = "trip";
       var pname = personName(t.payer);
@@ -1111,7 +994,7 @@
           (t.receipt_url ? '<img class="thumb" src="' + esc(t.receipt_url) + '" alt="Receipt">' : "") +
           '<span class="total money">' + fmt(Number(t.total)) + '</span>' +
         '</div>' +
-        '<div class="items">' + (its.length ? esc(its.map(function (i) { return i.name; }).join(", ")) : "<em>no items linked</em>") + '</div>' +
+        '<div class="items">' + (names.length ? esc(names.join(", ")) : "<em>no items linked</em>") + '</div>' +
         '<div class="trip-actions">' +
           '<button class="btn ghost small" data-act="edit" type="button">Edit</button>' +
           '<button class="btn ghost small" data-act="del" type="button">Delete run</button>' +
@@ -1145,7 +1028,7 @@
           if (isNaN(v)) { toast("Bad amount"); return; }
           t.payer = sel.value; t.total = v;
           render();
-          if (String(t.id).indexOf("tmp-") === 0) return;
+          if (isTmp(t.id)) return;
           track(sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id)).then(function (r) {
             if (r.error) { fail(r.error, "Updating run"); loadAll(); }
           });
@@ -1171,14 +1054,14 @@
         '<span class="avatar">' + esc(initials(p.name)) + '</span>' +
         '<span class="pname">' + esc(p.name) + '</span>' +
         '<span class="spent money">paid ' + fmt(bal[p.id] ? bal[p.id].paid : 0) + '</span>' +
-        '<button class="icon-btn" data-act="del" aria-label="Remove person">✕</button>';
+        '<button class="icon-btn danger" data-act="del" aria-label="Remove person">✕</button>';
       d.querySelector('[data-act="del"]').addEventListener("click", function () {
         if (trips.some(function (t) { return t.payer === p.id; })) {
           toast("Has paid runs — can't remove"); return;
         }
         people = people.filter(function (x) { return x.id !== p.id; });
         render();
-        if (String(p.id).indexOf("tmp-") === 0) return;
+        if (isTmp(p.id)) return;
         track(sb.from("people").delete().eq("id", p.id)).then(function (r) {
           if (r.error) { fail(r.error, "Removing person"); loadAll(); }
         });
@@ -1236,9 +1119,12 @@
   document.getElementById("exportCsv").addEventListener("click", function () {
     var rows = [["day", "payer", "total", "note", "items", "receipt"]];
     trips.slice().sort(function (a, b) { return String(a.day).localeCompare(String(b.day)); }).forEach(function (t) {
-      var its = items.filter(function (i) { return i.trip_id === t.id; })
-        .map(function (i) { return i.name; }).join("; ");
-      rows.push([t.day, personName(t.payer), Number(t.total).toFixed(2), t.note || "", its, t.receipt_url || ""]);
+      var names = runItems.filter(function (l) { return l.trip_id === t.id; })
+        .map(function (l) {
+          var it = items.find(function (x) { return x.id === l.item_id; });
+          return it ? it.name : null;
+        }).filter(Boolean).join("; ");
+      rows.push([t.day, personName(t.payer), Number(t.total).toFixed(2), t.note || "", names, t.receipt_url || ""]);
     });
     var csv = rows.map(function (r) {
       return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(",");
