@@ -429,6 +429,7 @@
     <h1><span class="tick">✓</span> Group Shopping</h1>
     <div class="head-right">
       <span class="live" id="liveBadge">connecting…</span>
+      <select class="currency-pick" id="meSel" aria-label="Who are you"></select>
       <select class="currency-pick" id="currencySel" aria-label="Currency">
         <option value="€">EUR €</option>
         <option value="$">USD $</option>
@@ -444,6 +445,7 @@
     <div class="stat"><div class="label" id="statDayLabel">This day</div><div class="value pending-c money" id="statDay">—</div></div>
     <div class="stat"><div class="label">Per person</div><div class="value money" id="statShare">—</div></div>
   </div>
+  <div class="note" id="presenceRow" style="margin:0 2px 10px;" hidden></div>
 
   <section id="tab-list">
     <div class="day-strip" id="dayStrip"></div>
@@ -491,9 +493,13 @@
       <button type="button" class="icon-btn danger" id="coClose" aria-label="Close" style="font-size:1.25rem;">✕</button>
     </div>
     <p class="items-note">Everything is shared by default. If something was for specific people (cigarettes, a bottle for two…), select them and enter its price — it splits equally among just them instead of the whole group.</p>
-    <div class="field">
+    <div class="field" id="coItemsWrap">
       <label>Items in this run</label>
       <div id="coItemRows" class="co-items"></div>
+    </div>
+    <div class="field" id="coForWrap" hidden>
+      <label>Who is this for (leave empty = everyone)</label>
+      <div id="coForPanel" class="pp-panel" style="max-height:190px;overflow-y:auto;"></div>
     </div>
     <div class="row">
       <div class="field">
@@ -580,7 +586,30 @@
   var items = [];      // the one shared, permanent pool
   var trips = [];      // runs: status 'draft' (open card) or 'done' (checked out)
   var runItems = [];   // links: which items are on which run card
+  var payments = [];   // recorded settle-up transfers
   var currency = localStorage.getItem("gs-currency") || "€";
+
+  // who this device is (picked from the roster) + a fun anonymous name until then
+  var me = localStorage.getItem("gs-me") || null;
+  var anonName = localStorage.getItem("gs-anon");
+  if (!anonName) {
+    var ADJ = ["sneaky", "hungry", "sleepy", "turbo", "chill", "spicy", "salty", "sunny", "wobbly", "mighty"];
+    var ANI = ["capybara", "seagull", "octopus", "raccoon", "dolphin", "hedgehog", "flamingo", "crab", "gecko", "walrus"];
+    anonName = ADJ[Math.floor(Math.random() * ADJ.length)] + " " + ANI[Math.floor(Math.random() * ANI.length)];
+    localStorage.setItem("gs-anon", anonName);
+  }
+  var deviceId = localStorage.getItem("gs-device");
+  if (!deviceId) {
+    deviceId = "d-" + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem("gs-device", deviceId);
+  }
+  function myDisplayName() {
+    if (me) {
+      var p = people.find(function (x) { return x.id === me; });
+      if (p) return p.name;
+    }
+    return anonName;
+  }
   var pendingReceiptBlob = null;
   var pendingReceiptPreview = null;
   var checkoutDraftId = null;
@@ -718,9 +747,10 @@
   }
   function toggleGrabbed(draftId, link) {
     link.grabbed = !link.grabbed;
+    link.grabbed_by = link.grabbed ? me : null;
     render();
     if (isTmp(draftId) || link.pending) return; // synced together with the link itself
-    track(sb.from("run_items").update({ grabbed: link.grabbed })
+    track(sb.from("run_items").update({ grabbed: link.grabbed, grabbed_by: link.grabbed_by })
       .eq("trip_id", draftId).eq("item_id", link.item_id)).then(function (r) {
         if (r.error) { fail(r.error, "Updating cart state"); loadAll(); }
       });
@@ -738,9 +768,10 @@
       sb.from("people").select("*").order("created_at"),
       sb.from("items").select("*").order("created_at"),
       sb.from("trips").select("*").order("created_at", { ascending: false }),
-      sb.from("run_items").select("*")
+      sb.from("run_items").select("*"),
+      sb.from("settlements").select("*").order("created_at")
     ]).then(function (res) {
-      for (var k = 0; k < 4; k++) { if (res[k].error) throw res[k].error; }
+      for (var k = 0; k < 5; k++) { if (res[k].error) throw res[k].error; }
       if (seqAtStart !== mutSeq || pendingOps > 0) {
         // something changed locally while this snapshot was in flight — it's stale, refetch
         scheduleReload();
@@ -750,6 +781,7 @@
       items = res[1].data;
       trips = res[2].data;
       runItems = res[3].data;
+      payments = res[4].data;
       render();
     }).catch(function (err) { fail(err, "Loading"); });
   }
@@ -785,16 +817,39 @@
   function tmpId() { return "tmp-" + Math.random().toString(36).slice(2, 10); }
   function isTmp(id) { return String(id).indexOf("tmp-") === 0; }
 
-  sb.channel("room")
+  var viewers = [];
+  var chan = sb.channel("room", { config: { presence: { key: deviceId } } });
+  chan
     .on("postgres_changes", { event: "*", schema: "public", table: "items" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "people" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "run_items" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "settlements" }, scheduleReload)
+    .on("presence", { event: "sync" }, function () {
+      var state = chan.presenceState();
+      viewers = Object.keys(state).map(function (k) {
+        var metas = state[k];
+        return metas && metas.length ? metas[0].n : null;
+      }).filter(Boolean);
+      renderPresence();
+    })
     .subscribe(function (status) {
       rtOn = status === "SUBSCRIBED";
       setBadge();
-      if (rtOn) scheduleReload();
+      if (rtOn) {
+        chan.track({ n: myDisplayName() });
+        scheduleReload();
+      }
     });
+  function announceMe() {
+    if (rtOn) chan.track({ n: myDisplayName() });
+  }
+  function renderPresence() {
+    var el = document.getElementById("presenceRow");
+    if (viewers.length < 2) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = "👀 looking now: " + viewers.join(", ");
+  }
 
   // ── tabs ──
   var tabBtns = document.querySelectorAll(".tabs button");
@@ -807,6 +862,28 @@
       });
     });
   });
+
+  // ── who am I ──
+  var meSel = document.getElementById("meSel");
+  meSel.addEventListener("change", function () {
+    me = meSel.value || null;
+    if (me) localStorage.setItem("gs-me", me); else localStorage.removeItem("gs-me");
+    announceMe();
+    render();
+  });
+  function renderMe() {
+    meSel.innerHTML = "";
+    var o0 = document.createElement("option");
+    o0.value = ""; o0.textContent = "who are you?";
+    meSel.appendChild(o0);
+    people.forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p.id; o.textContent = p.name;
+      if (p.id === me) o.selected = true;
+      meSel.appendChild(o);
+    });
+    if (me && !people.some(function (p) { return p.id === me; })) meSel.value = "";
+  }
 
   // ── currency ──
   var curSel = document.getElementById("currencySel");
@@ -827,10 +904,10 @@
       toast("Already on the list"); return;
     }
     inp.value = "";
-    var tmp = { id: tmpId(), name: name };
+    var tmp = { id: tmpId(), name: name, added_by: me };
     items.push(tmp);
     render();
-    track(sb.from("items").insert({ name: name, day: todayStr(), status: "open" })).then(function (r) {
+    track(sb.from("items").insert({ name: name, day: todayStr(), status: "open", added_by: me })).then(function (r) {
       if (r.error) {
         items = items.filter(function (x) { return x !== tmp; });
         render();
@@ -921,8 +998,71 @@
     if (d) openCheckout(d);
   });
 
+  var coMode = "run";
+  var coForSelected = {};
+  var coExpenseTrip = null;
+
+  function buildForPanel(pre) {
+    coForSelected = {};
+    (pre || []).forEach(function (pid) { coForSelected[pid] = true; });
+    var panel = document.getElementById("coForPanel");
+    panel.innerHTML = "";
+    people.forEach(function (p) {
+      var pr = document.createElement("div");
+      pr.className = "pp-row" + (coForSelected[p.id] ? " on" : "");
+      pr.setAttribute("role", "checkbox");
+      pr.tabIndex = 0;
+      pr.innerHTML = '<span class="box">✓</span>' + esc(p.name);
+      function flip() {
+        if (coForSelected[p.id]) delete coForSelected[p.id]; else coForSelected[p.id] = true;
+        pr.classList.toggle("on", !!coForSelected[p.id]);
+      }
+      pr.addEventListener("click", flip);
+      pr.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+      });
+      panel.appendChild(pr);
+    });
+  }
+
+  function openExpense(trip) {
+    coMode = "expense";
+    coExpenseTrip = trip || null;
+    checkoutDraftId = trip ? trip.id : null;
+    document.getElementById("coTitle").textContent =
+      (trip ? "Edit expense · " : "Add expense · ") + dayLabel(trip ? trip.day : selectedDay);
+    document.getElementById("coItemsWrap").hidden = true;
+    document.getElementById("coForWrap").hidden = false;
+    buildForPanel(trip ? trip.for_people : null);
+    var sel = document.getElementById("coPayer");
+    sel.innerHTML = "";
+    people.forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p.id; o.textContent = p.name;
+      sel.appendChild(o);
+    });
+    sel.value = (trip && trip.payer) || me || (people[0] && people[0].id) || "";
+    document.getElementById("coTotal").value = trip && trip.total != null ? Number(trip.total).toFixed(2) : "";
+    document.getElementById("coNote").value = (trip && trip.note) || "";
+    pendingReceiptBlob = null;
+    pendingReceiptPreview = null;
+    if (trip && trip.receipt_url) {
+      receiptDrop.innerHTML = "";
+      var cur = document.createElement("img");
+      cur.src = trip.receipt_url; cur.alt = "Current receipt — tap to replace";
+      receiptDrop.appendChild(cur);
+    } else {
+      receiptDrop.innerHTML = "📷 Snap or attach the receipt";
+    }
+    sheetBack.hidden = false;
+    document.getElementById("coTotal").focus();
+  }
+
   function openCheckout(draft) {
     if (isTmp(draft.id) || draft.pending) { toast("Card is still opening — one second"); return; }
+    coMode = "run";
+    document.getElementById("coItemsWrap").hidden = false;
+    document.getElementById("coForWrap").hidden = true;
     var isDone = draft.status !== "draft";
     var links = draftLinks(draft.id);
     if (!links.length && !isDone) { toast("The run card is empty"); return; }
@@ -1042,6 +1182,7 @@
       if (draft.payer === p.id) o.selected = true;
       sel.appendChild(o);
     });
+    if (!draft.payer && me) sel.value = me;
     document.getElementById("coTotal").value = draft.total != null ? Number(draft.total).toFixed(2) : "";
     document.getElementById("coNote").value = draft.note || "";
     pendingReceiptBlob = null;
@@ -1057,7 +1198,12 @@
     sheetBack.hidden = false;
     document.getElementById("coTotal").focus();
   }
-  function closeCheckout() { sheetBack.hidden = true; checkoutDraftId = null; }
+  function closeCheckout() {
+    sheetBack.hidden = true;
+    checkoutDraftId = null;
+    coMode = "run";
+    coExpenseTrip = null;
+  }
   document.getElementById("coCancel").addEventListener("click", closeCheckout);
   document.getElementById("coClose").addEventListener("click", closeCheckout);
   sheetBack.addEventListener("click", function (e) {
@@ -1101,6 +1247,61 @@
 
   document.getElementById("checkoutForm").addEventListener("submit", function (e) {
     e.preventDefault();
+    if (coMode === "expense") {
+      var epayer = document.getElementById("coPayer").value;
+      var etotal = parseFloat(document.getElementById("coTotal").value);
+      if (!epayer || isNaN(etotal)) { toast("Payer and total are required"); return; }
+      var enote = document.getElementById("coNote").value.trim();
+      var eFor = Object.keys(coForSelected);
+      var eForVal = eFor.length ? eFor : null;
+      var eBlob = pendingReceiptBlob;
+      var ePreview = pendingReceiptPreview;
+      var editing = coExpenseTrip;
+
+      if (editing) {
+        editing.payer = epayer; editing.total = etotal; editing.note = enote;
+        editing.for_people = eForVal;
+        if (ePreview) editing.receipt_url = ePreview;
+      } else {
+        editing = {
+          id: tmpId(), day: selectedDay, status: "done", payer: epayer, total: etotal,
+          note: enote, for_people: eForVal, receipt_url: ePreview,
+          created_at: new Date().toISOString()
+        };
+        trips.unshift(editing);
+      }
+      var isNew = isTmp(editing.id);
+      var editId = editing.id;
+      closeCheckout();
+      render();
+      toast("Expense saved: " + fmt(etotal) + " by " + personName(epayer));
+
+      var eUpload = Promise.resolve(null);
+      if (eBlob) {
+        var epath = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".jpg";
+        eUpload = Promise.resolve(sb.storage.from("receipts")
+          .upload(epath, eBlob, { contentType: "image/jpeg" }))
+          .then(function (r) {
+            if (r.error) { toast("Receipt upload failed — saving without it"); return null; }
+            return sb.storage.from("receipts").getPublicUrl(epath).data.publicUrl;
+          });
+      }
+      track(eUpload.then(function (receiptUrl) {
+        var payload = { day: selectedDay, status: "done", payer: epayer, total: etotal, note: enote, for_people: eForVal };
+        if (receiptUrl) payload.receipt_url = receiptUrl;
+        if (isNew) return sb.from("trips").insert(payload);
+        delete payload.day;
+        return sb.from("trips").update(payload).eq("id", editId);
+      }).then(function (r) {
+        if (r.error) throw r.error;
+        loadAll();
+      }).catch(function (err) {
+        fail(err, "Saving expense");
+        loadAll();
+      }));
+      return;
+    }
+
     var draft = trips.find(function (t) { return t.id === checkoutDraftId; });
     if (!draft) { closeCheckout(); return; }
     var payer = document.getElementById("coPayer").value;
@@ -1197,9 +1398,11 @@
     });
     return m;
   }
+  function isSubsetTrip(t) { return !!(t.for_people && t.for_people.length); }
   function commonTotal() {
     var pbt = personalByTrip();
     return doneTrips().reduce(function (s, t) {
+      if (isSubsetTrip(t)) return s;   // whole trip belongs to specific people
       return s + Math.max(0, Number(t.total || 0) - (pbt[t.id] || 0));
     }, 0);
   }
@@ -1212,6 +1415,12 @@
     doneTrips().forEach(function (t) {
       doneIds[t.id] = true;
       if (map[t.payer]) map[t.payer].paid += Number(t.total || 0);
+      if (isSubsetTrip(t)) {
+        var per = Number(t.total || 0) / t.for_people.length;
+        t.for_people.forEach(function (pid) {
+          if (map[pid]) map[pid].personal += per;
+        });
+      }
     });
     runItems.forEach(function (l) {
       if (!doneIds[l.trip_id] || !l.amount) return;
@@ -1224,6 +1433,11 @@
     });
     Object.keys(map).forEach(function (id) {
       map[id].balance = map[id].paid - share - map[id].personal;
+    });
+    // recorded settle-up payments move balances toward zero
+    payments.forEach(function (p) {
+      if (map[p.from_person]) map[p.from_person].balance += Number(p.amount);
+      if (map[p.to_person]) map[p.to_person].balance -= Number(p.amount);
     });
     return map;
   }
@@ -1264,6 +1478,7 @@
     document.getElementById("itemCount").textContent = "(" + items.length + ")";
     document.getElementById("peopleCount").textContent = "(" + people.length + ")";
 
+    renderMe();
     renderDays();
     renderTrips();
     renderItems();
@@ -1375,6 +1590,13 @@
         nm.textContent = it.name;
         row.appendChild(chk);
         row.appendChild(nm);
+        if (l.grabbed && l.grabbed_by) {
+          var by = document.createElement("span");
+          by.className = "meta";
+          by.style.fontSize = "0.72rem";
+          by.textContent = initials(personName(l.grabbed_by));
+          row.appendChild(by);
+        }
 
         if (!l.pending) {
           var qty = document.createElement("span");
@@ -1424,19 +1646,31 @@
       el.appendChild(c);
     });
 
+    var btnRow = document.createElement("div");
+    btnRow.className = "toolbar";
+    btnRow.style.margin = "0";
     if (ds.length) {
       var more = document.createElement("button");
       more.className = "btn ghost small";
       more.type = "button";
       more.textContent = "＋ Start another card";
-      more.style.alignSelf = "flex-start";
       more.addEventListener("click", startNewCard);
-      el.appendChild(more);
+      btnRow.appendChild(more);
     }
+    var expBtn = document.createElement("button");
+    expBtn.className = "btn ghost small";
+    expBtn.type = "button";
+    expBtn.textContent = "＋ Add expense (no items)";
+    expBtn.addEventListener("click", function () { openExpense(null); });
+    btnRow.appendChild(expBtn);
+    el.appendChild(btnRow);
 
     var dt = dayTrips(selectedDay).filter(function (t) { return t.status !== "draft"; });
     if (!dt.length && !ds.length) {
-      el.innerHTML = '<div class="empty">No runs on ' + dayLabel(selectedDay) + ' yet — hit ＋ on an item below to open a run card.</div>';
+      var em = document.createElement("div");
+      em.className = "empty";
+      em.textContent = "No runs on " + dayLabel(selectedDay) + " yet — hit ＋ on an item below to open a run card.";
+      el.insertBefore(em, btnRow);
       return;
     }
     dt.forEach(function (t) {
@@ -1465,7 +1699,9 @@
           (t.receipt_url ? '<img class="thumb" src="' + esc(t.receipt_url) + '" alt="Receipt">' : "") +
           '<span class="total money">' + fmt(Number(t.total || 0)) + '</span>' +
         '</div>' +
-        '<div class="items">' + (names.length ? esc(names.join(", ")) : "<em>no items linked</em>") + '</div>' +
+        '<div class="items">' + (names.length
+          ? esc(names.join(", "))
+          : esc("🧾 expense" + (isSubsetTrip(t) ? " · for " + t.for_people.map(personName).join(" + ") : ""))) + '</div>' +
         '<div class="trip-actions">' +
           '<button class="btn ghost small" data-act="edit" type="button">Edit</button>' +
           '<button class="btn ghost small" data-act="del" type="button">Delete run</button>' +
@@ -1477,7 +1713,9 @@
         });
       }
       d.querySelector('[data-act="del"]').addEventListener("click", function () { deleteTrip(t); });
-      d.querySelector('[data-act="edit"]').addEventListener("click", function () { openCheckout(t); });
+      d.querySelector('[data-act="edit"]').addEventListener("click", function () {
+        if (names.length) openCheckout(t); else openExpense(t);
+      });
       el.appendChild(d);
     });
   }
@@ -1503,6 +1741,7 @@
       d.innerHTML =
         '<span class="check">' + (inActive ? "✓" : "＋") + '</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
+        (i.added_by ? '<span class="meta">' + esc(initials(personName(i.added_by))) + '</span>' : "") +
         (inActive ? '<span class="chip bought">on this card</span>' : "") +
         (inOther ? '<span class="chip incard">on card ' + (otherNum || "?") + '</span>' : "") +
         '<button class="icon-btn edit" data-act="edit" aria-label="Edit item">✎</button>' +
@@ -1634,8 +1873,61 @@
       st.forEach(function (s) {
         var d = document.createElement("div");
         d.className = "settle";
-        d.innerHTML = "<strong>" + esc(s.from.name) + "</strong> pays <strong>" +
+        d.style.display = "flex";
+        d.style.alignItems = "center";
+        d.style.gap = "8px";
+        var txt = document.createElement("span");
+        txt.style.flex = "1";
+        txt.innerHTML = "<strong>" + esc(s.from.name) + "</strong> pays <strong>" +
           esc(s.to.name) + "</strong> <span class='money'>" + fmt(s.amt) + "</span>";
+        var mk = document.createElement("button");
+        mk.className = "btn small";
+        mk.type = "button";
+        mk.textContent = "Mark paid";
+        mk.addEventListener("click", function () {
+          var tmp = {
+            id: tmpId(), from_person: s.from.id, to_person: s.to.id,
+            amount: s.amt, created_at: new Date().toISOString()
+          };
+          payments.push(tmp);
+          render();
+          toast(s.from.name + " → " + s.to.name + " " + fmt(s.amt) + " recorded");
+          track(sb.from("settlements").insert({
+            from_person: s.from.id, to_person: s.to.id, amount: s.amt
+          })).then(function (r) {
+            if (r.error) {
+              payments = payments.filter(function (x) { return x !== tmp; });
+              render();
+              fail(r.error, "Recording payment");
+            } else loadAll();
+          });
+        });
+        d.appendChild(txt);
+        d.appendChild(mk);
+        sl.appendChild(d);
+      });
+    }
+
+    if (payments.length) {
+      var ph = document.createElement("div");
+      ph.className = "note";
+      ph.textContent = "Recorded payments";
+      sl.appendChild(ph);
+      payments.slice().reverse().forEach(function (p) {
+        var d = document.createElement("div");
+        d.className = "bal-row";
+        d.innerHTML =
+          '<span class="pname">' + esc(personName(p.from_person)) + " → " + esc(personName(p.to_person)) + '</span>' +
+          '<span class="money">' + fmt(Number(p.amount)) + '</span>' +
+          '<button class="icon-btn danger" data-act="del" aria-label="Remove payment">✕</button>';
+        d.querySelector('[data-act="del"]').addEventListener("click", function () {
+          payments = payments.filter(function (x) { return x.id !== p.id; });
+          render();
+          if (isTmp(p.id)) return;
+          track(sb.from("settlements").delete().eq("id", p.id)).then(function (r) {
+            if (r.error) { fail(r.error, "Removing payment"); loadAll(); }
+          });
+        });
         sl.appendChild(d);
       });
     }
