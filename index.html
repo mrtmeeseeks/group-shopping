@@ -348,20 +348,17 @@
 
   <section id="tab-list">
     <div class="day-strip" id="dayStrip"></div>
+    <h2 id="runsHead" style="margin-top:6px;">Runs</h2>
+    <div class="card-list" id="tripList"></div>
+    <h2>Shopping list <span class="count" id="itemCount"></span></h2>
     <form class="add-row" id="addItemForm">
-      <input type="text" id="newItemName" placeholder="Add item to the list…" aria-label="New item" required>
+      <input type="text" id="newItemName" placeholder="Add item to the pool…" aria-label="New item" required>
       <button class="btn" type="submit">Add</button>
     </form>
-    <p class="note">One shared list. Tap items to put them in the cart, then <strong>Check out</strong> a run — who paid + receipt total. Items stay on the list for the next run; ✓ marks what's already bought on the selected day.</p>
-    <h2>Shopping list <span class="count" id="itemCount"></span></h2>
+    <p class="note">One shared pool — it never changes when you shop. Tap items to build a run, <strong>Check out</strong> with who paid + receipt total, and the run appears above. Many runs per day is fine.</p>
     <div class="card-list" id="itemList"></div>
-  </section>
-
-  <section id="tab-ledger" hidden>
-    <h2>Shopping runs</h2>
-    <div class="card-list" id="tripList"></div>
     <div class="toolbar" style="margin-top:14px;">
-      <button class="btn ghost" id="exportCsv" type="button">Download runs (CSV)</button>
+      <button class="btn ghost small" id="exportCsv" type="button">Download all runs (CSV)</button>
     </div>
   </section>
 
@@ -423,7 +420,6 @@
 
 <nav class="tabs" aria-label="Sections" id="tabBar" hidden>
   <button data-tab="list" class="active"><span class="icon" aria-hidden="true">🛒</span>List</button>
-  <button data-tab="ledger"><span class="icon" aria-hidden="true">🧾</span>Runs</button>
   <button data-tab="people"><span class="icon" aria-hidden="true">👥</span>People</button>
   <button data-tab="balances"><span class="icon" aria-hidden="true">⚖️</span>Balances</button>
 </nav>
@@ -583,7 +579,7 @@
     b.addEventListener("click", function () {
       tabBtns.forEach(function (x) { x.classList.remove("active"); });
       b.classList.add("active");
-      ["list", "ledger", "people", "balances"].forEach(function (t) {
+      ["list", "people", "balances"].forEach(function (t) {
         document.getElementById("tab-" + t).hidden = t !== b.dataset.tab;
       });
     });
@@ -790,16 +786,6 @@
   function dayTrips(day) {
     return trips.filter(function (t) { return t.day === day; });
   }
-  function boughtMapFor(day) {
-    // item_id -> trip (the run it was bought in on that day)
-    var map = {};
-    var dt = {};
-    dayTrips(day).forEach(function (t) { dt[t.id] = t; });
-    runItems.forEach(function (l) {
-      if (dt[l.trip_id]) map[l.item_id] = dt[l.trip_id];
-    });
-    return map;
-  }
   function balances() {
     var map = {};
     people.forEach(function (p) { map[p.id] = { person: p, paid: 0, balance: 0 }; });
@@ -892,21 +878,14 @@
       el.innerHTML = '<div class="empty">The list is empty. Add items above.</div>';
       return;
     }
-    var bought = boughtMapFor(selectedDay);
-    var sorted = items.slice().sort(function (a, b) {
-      var ab = bought[a.id] ? 1 : 0, bb = bought[b.id] ? 1 : 0;
-      return ab - bb;
-    });
-    sorted.forEach(function (i) {
-      var t = bought[i.id];
+    items.forEach(function (i) {
       var d = document.createElement("div");
-      d.className = "item" + (cart[i.id] ? " selected" : "") + (t ? " done" : "");
+      d.className = "item" + (cart[i.id] ? " selected" : "");
       d.setAttribute("role", "button");
       d.tabIndex = 0;
       d.innerHTML =
         '<span class="check">' + (cart[i.id] ? "✓" : "") + '</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
-        (t ? '<span class="chip bought">✓ ' + esc(personName(t.payer)) + '</span>' : "") +
         '<button class="icon-btn edit" data-act="edit" aria-label="Edit item">✎</button>' +
         '<button class="icon-btn danger" data-act="del" aria-label="Remove item">✕</button>';
       function toggle() {
@@ -969,12 +948,14 @@
 
   function renderTrips() {
     var el = document.getElementById("tripList");
+    document.getElementById("runsHead").textContent = "Runs · " + dayLabel(selectedDay);
     el.innerHTML = "";
-    if (!trips.length) {
-      el.innerHTML = '<div class="empty">No shopping runs yet. Select items on the List tab and check out.</div>';
+    var dt = dayTrips(selectedDay);
+    if (!dt.length) {
+      el.innerHTML = '<div class="empty">No runs on ' + dayLabel(selectedDay) + ' yet — tap items below and check out.</div>';
       return;
     }
-    trips.forEach(function (t) {
+    dt.forEach(function (t) {
       var names = runItems.filter(function (l) { return l.trip_id === t.id; })
         .map(function (l) {
           var it = items.find(function (x) { return x.id === l.item_id; });
@@ -983,7 +964,7 @@
       var d = document.createElement("div");
       d.className = "trip";
       var pname = personName(t.payer);
-      var metaBits = [dayLabel(t.day)];
+      var metaBits = [];
       if (t.created_at) metaBits.push(timeLabel(t.created_at));
       if (t.note) metaBits.push(t.note);
       d.innerHTML =
