@@ -203,13 +203,20 @@
   .sheet .items-note { font-size: 0.8rem; color: var(--ink-soft); margin: 0 0 14px; }
   .co-items { display: flex; flex-direction: column; gap: 6px; }
   .co-item {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; flex-direction: column; gap: 6px;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 6px 8px;
   }
+  .co-main { display: flex; align-items: center; gap: 8px; }
   .co-item .nm { flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 600; overflow-wrap: anywhere; }
-  .co-item select { padding: 6px 6px; max-width: 42%; }
   .co-item input { width: 88px; padding: 6px 8px; }
+  .co-people { display: flex; flex-wrap: wrap; gap: 6px; }
+  .p-chip {
+    font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer;
+    background: none; color: var(--ink-soft);
+    border: 1px solid var(--line); border-radius: 99px; padding: 3px 9px;
+  }
+  .p-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .sheet .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
   .sheet .field label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); font-weight: 600; }
   .sheet .row { display: flex; gap: 8px; }
@@ -246,16 +253,32 @@
   .trip .items { font-size: 0.82rem; color: var(--ink-soft); margin-top: 8px; overflow-wrap: anywhere; }
   .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .trip.current { border: 1.5px dashed var(--accent); }
-  .run-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .run-chip {
-    font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer;
-    background: var(--accent-soft); color: var(--accent);
-    border: none; border-radius: 99px; padding: 4px 10px;
+  .run-rows { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+  .run-row {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--ground); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; cursor: pointer; user-select: none; -webkit-user-select: none;
   }
-  .run-chip.pending { opacity: 0.65; cursor: default; }
-  .run-chip.grabbed { background: var(--accent); color: var(--accent-ink); }
-  .run-chip .x { margin-left: 6px; opacity: 0.7; padding: 2px 3px; }
-  .run-chip .x:hover { opacity: 1; }
+  .run-row .rcheck {
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; color: transparent;
+  }
+  .run-row.grabbed { background: var(--credit-soft); border-color: transparent; }
+  .run-row.grabbed .rcheck { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .run-row .rname { flex: 1; min-width: 0; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+  .run-row.grabbed .rname { color: var(--ink-soft); text-decoration: line-through; }
+  .run-row.pending { opacity: 0.65; cursor: default; }
+  .run-row .qty { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .run-row .qty button {
+    width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line);
+    background: none; color: var(--ink); cursor: pointer; font-size: 0.95rem; line-height: 1;
+    padding: 0;
+  }
+  .run-row .qty .qv { min-width: 30px; text-align: center; font-weight: 700; font-size: 0.82rem; }
+  .progress { height: 4px; border-radius: 2px; background: var(--line); margin-top: 10px; overflow: hidden; }
+  .progress span { display: block; height: 100%; background: var(--accent); }
   .spin {
     display: inline-block; width: 11px; height: 11px;
     border: 2px solid currentColor; border-right-color: transparent;
@@ -602,11 +625,30 @@
   }
   function syncLink(did, itemId) {
     var l0 = runItems.find(function (x) { return x.trip_id === did && x.item_id === itemId; });
-    track(sb.from("run_items").insert({ trip_id: did, item_id: itemId, grabbed: !!(l0 && l0.grabbed) })).then(function (r) {
+    track(sb.from("run_items").insert({
+      trip_id: did, item_id: itemId,
+      grabbed: !!(l0 && l0.grabbed), qty: (l0 && l0.qty) || 1
+    })).then(function (r) {
       if (r.error && r.error.code !== "23505") { fail(r.error, "Adding to run card"); loadAll(); return; }
       var l = runItems.find(function (x) { return x.trip_id === did && x.item_id === itemId; });
       if (l) { l.pending = false; render(); }
     });
+  }
+  function linkPeople(l) {
+    if (l.for_people && l.for_people.length) return l.for_people;
+    return l.for_person ? [l.for_person] : [];
+  }
+  function setQty(draftId, link, delta) {
+    var q = (link.qty || 1) + delta;
+    if (q < 1) q = 1;
+    if (q === (link.qty || 1)) return;
+    link.qty = q;
+    render();
+    if (isTmp(draftId) || link.pending) return; // syncs together with the link insert
+    track(sb.from("run_items").update({ qty: q })
+      .eq("trip_id", draftId).eq("item_id", link.item_id)).then(function (r) {
+        if (r.error) { fail(r.error, "Updating quantity"); loadAll(); }
+      });
   }
   function toggleGrabbed(draftId, link) {
     link.grabbed = !link.grabbed;
@@ -818,33 +860,59 @@
     links.forEach(function (l) {
       var it = items.find(function (x) { return x.id === l.item_id; });
       if (!it) return;
+      var selected = {};
+      linkPeople(l).forEach(function (pid) { selected[pid] = true; });
+
       var row = document.createElement("div");
       row.className = "co-item";
       row.dataset.itemId = it.id;
+      row._selected = selected;
+
+      var main = document.createElement("div");
+      main.className = "co-main";
       var nm = document.createElement("span");
       nm.className = "nm";
-      nm.textContent = it.name;
-      var psel = document.createElement("select");
-      psel.setAttribute("aria-label", "Personal for");
-      var o0 = document.createElement("option");
-      o0.value = ""; o0.textContent = "Shared";
-      psel.appendChild(o0);
-      people.forEach(function (p) {
-        var o = document.createElement("option");
-        o.value = p.id; o.textContent = p.name;
-        if (l.for_person === p.id) o.selected = true;
-        psel.appendChild(o);
-      });
+      nm.textContent = it.name + ((l.qty || 1) > 1 ? " ×" + l.qty : "");
+      var who = document.createElement("button");
+      who.type = "button";
+      who.className = "btn ghost small";
       var amt = document.createElement("input");
       amt.type = "number"; amt.step = "0.01"; amt.min = "0";
       amt.placeholder = "price";
-      amt.hidden = !l.for_person;
       if (l.amount) amt.value = Number(l.amount).toFixed(2);
-      psel.addEventListener("change", function () {
-        amt.hidden = !psel.value;
-        if (psel.value) amt.focus();
+      main.appendChild(nm); main.appendChild(who); main.appendChild(amt);
+
+      var pp = document.createElement("div");
+      pp.className = "co-people";
+      pp.hidden = true;
+      people.forEach(function (p) {
+        var pc = document.createElement("button");
+        pc.type = "button";
+        pc.className = "p-chip" + (selected[p.id] ? " on" : "");
+        pc.textContent = p.name;
+        pc.addEventListener("click", function () {
+          if (selected[p.id]) delete selected[p.id]; else selected[p.id] = true;
+          pc.classList.toggle("on", !!selected[p.id]);
+          refresh();
+        });
+        pp.appendChild(pc);
       });
-      row.appendChild(nm); row.appendChild(psel); row.appendChild(amt);
+
+      function refresh() {
+        var n = Object.keys(selected).length;
+        var names = Object.keys(selected).map(personName);
+        who.textContent = n
+          ? "For: " + (names.length > 2 ? names.slice(0, 2).join(", ") + " +" + (names.length - 2) : names.join(" + "))
+          : "Shared ▾";
+        amt.hidden = !n;
+      }
+      refresh();
+      who.addEventListener("click", function () {
+        pp.hidden = !pp.hidden;
+      });
+
+      row.appendChild(main);
+      row.appendChild(pp);
       rowsEl.appendChild(row);
     });
     var sel = document.getElementById("coPayer");
@@ -922,11 +990,11 @@
     var assign = {};
     var badPersonal = false, personalSum = 0;
     document.querySelectorAll("#coItemRows .co-item").forEach(function (row) {
-      var pid = row.querySelector("select").value;
-      if (!pid) { assign[row.dataset.itemId] = { for_person: null, amount: null }; return; }
+      var pids = Object.keys(row._selected || {});
+      if (!pids.length) { assign[row.dataset.itemId] = { for_people: null, amount: null }; return; }
       var v = parseFloat(row.querySelector("input").value);
       if (isNaN(v) || v <= 0) { badPersonal = true; return; }
-      assign[row.dataset.itemId] = { for_person: pid, amount: v };
+      assign[row.dataset.itemId] = { for_people: pids, amount: v };
       personalSum += v;
     });
     if (badPersonal) { toast("Enter the price for each personal item"); return; }
@@ -941,8 +1009,9 @@
     if (receiptPreview) draft.receipt_url = receiptPreview;
     runItems.forEach(function (l) {
       if (l.trip_id !== draft.id) return;
-      var a = assign[l.item_id] || { for_person: null, amount: null };
-      l.for_person = a.for_person;
+      var a = assign[l.item_id] || { for_people: null, amount: null };
+      l.for_people = a.for_people;
+      l.for_person = a.for_people ? a.for_people[0] : null;
       l.amount = a.amount;
     });
     if (activeDraftId === draft.id) activeDraftId = null;
@@ -970,7 +1039,11 @@
       var links = draftLinks(draft.id)
         .filter(function (l) { return !isTmp(l.item_id); })
         .map(function (l) {
-          return { trip_id: draft.id, item_id: l.item_id, for_person: l.for_person, amount: l.amount };
+          return {
+            trip_id: draft.id, item_id: l.item_id,
+            for_person: l.for_person || null, for_people: l.for_people || null,
+            amount: l.amount, qty: l.qty || 1, grabbed: !!l.grabbed
+          };
         });
       if (!links.length) { loadAll(); return; }
       return Promise.resolve(sb.from("run_items").upsert(links)).then(function (r2) {
@@ -997,7 +1070,7 @@
   function personalByTrip() {
     var m = {};
     runItems.forEach(function (l) {
-      if (l.for_person && l.amount) m[l.trip_id] = (m[l.trip_id] || 0) + Number(l.amount);
+      if (linkPeople(l).length && l.amount) m[l.trip_id] = (m[l.trip_id] || 0) + Number(l.amount);
     });
     return m;
   }
@@ -1018,9 +1091,13 @@
       if (map[t.payer]) map[t.payer].paid += Number(t.total || 0);
     });
     runItems.forEach(function (l) {
-      if (doneIds[l.trip_id] && l.for_person && l.amount && map[l.for_person]) {
-        map[l.for_person].personal += Number(l.amount);
-      }
+      if (!doneIds[l.trip_id] || !l.amount) return;
+      var ppl = linkPeople(l);
+      if (!ppl.length) return;
+      var per = Number(l.amount) / ppl.length;
+      ppl.forEach(function (pid) {
+        if (map[pid]) map[pid].personal += per;
+      });
     });
     Object.keys(map).forEach(function (id) {
       map[id].balance = map[id].paid - share - map[id].personal;
@@ -1128,53 +1205,91 @@
           '<div class="meta">' +
             (function () {
               var grabbed = links.filter(function (l) { return l.grabbed; }).length;
-              return links.length + " item" + (links.length === 1 ? "" : "s") +
-                (links.length ? " · " + grabbed + " in the cart" : "");
+              return (links.length
+                ? grabbed + " of " + links.length + " in the trolley · tap an item when you grab it"
+                : "empty");
             })() +
             (t.pending ? " · opening…" : (t.created_at ? " · started " + timeLabel(t.created_at) : "")) +
-            " · tap = grabbed</div></div>" +
+            "</div></div>" +
         '</div>' +
-        '<div class="run-chips"></div>' +
+        '<div class="run-rows"></div>' +
+        (links.length ? '<div class="progress"><span style="width:' +
+          Math.round(links.filter(function (l) { return l.grabbed; }).length / links.length * 100) +
+          '%"></span></div>' : "") +
         '<div class="trip-actions">' +
           '<button class="btn small" data-act="go" type="button">Check out run →</button>' +
           (!isActive ? '<button class="btn ghost small" data-act="use" type="button">Add to this card</button>' : "") +
           '<button class="btn ghost small" data-act="discard" type="button">Discard</button>' +
         '</div>';
-      var chips = c.querySelector(".run-chips");
+      var rowsBox = c.querySelector(".run-rows");
       if (!links.length) {
         var hint = document.createElement("span");
         hint.className = "note";
         hint.style.margin = "0";
         hint.textContent = "Empty — hit ＋ on items below.";
-        chips.appendChild(hint);
+        rowsBox.appendChild(hint);
       }
       links.forEach(function (l) {
         var it = items.find(function (x) { return x.id === l.item_id; });
         if (!it) return;
-        var ch = document.createElement("button");
-        ch.className = "run-chip" + (l.pending ? " pending" : "") + (l.grabbed ? " grabbed" : "");
-        ch.type = "button";
-        ch.textContent = (l.grabbed ? "✓ " : "") + it.name;
+        var row = document.createElement("div");
+        row.className = "run-row" + (l.pending ? " pending" : "") + (l.grabbed ? " grabbed" : "");
+        row.setAttribute("role", "button");
+        row.tabIndex = 0;
+        row.setAttribute("aria-label", it.name + (l.grabbed ? " — in the trolley, tap to undo" : " — tap when it's in the trolley"));
+
+        var chk = document.createElement("span");
+        chk.className = "rcheck";
         if (l.pending) {
-          ch.appendChild(document.createTextNode(" "));
           var sp = document.createElement("span");
           sp.className = "spin";
-          ch.appendChild(sp);
+          chk.appendChild(sp);
         } else {
-          ch.setAttribute("aria-label", it.name + (l.grabbed ? " — in the cart, tap to undo" : " — tap when it's in the cart"));
-          ch.addEventListener("click", function () { toggleGrabbed(t.id, l); });
-          var x = document.createElement("span");
-          x.className = "x";
-          x.textContent = "✕";
-          x.setAttribute("role", "button");
-          x.setAttribute("aria-label", "Remove from card");
-          x.addEventListener("click", function (e) {
-            e.stopPropagation();
-            removeFromDraft(t.id, l.item_id);
-          });
-          ch.appendChild(x);
+          chk.textContent = "✓";
         }
-        chips.appendChild(ch);
+        var nm = document.createElement("span");
+        nm.className = "rname";
+        nm.textContent = it.name;
+        row.appendChild(chk);
+        row.appendChild(nm);
+
+        if (!l.pending) {
+          var qty = document.createElement("span");
+          qty.className = "qty";
+          var minus = document.createElement("button");
+          minus.type = "button"; minus.textContent = "−";
+          minus.setAttribute("aria-label", "One less " + it.name);
+          var qv = document.createElement("span");
+          qv.className = "qv";
+          qv.textContent = "×" + (l.qty || 1);
+          var plus = document.createElement("button");
+          plus.type = "button"; plus.textContent = "＋";
+          plus.setAttribute("aria-label", "One more " + it.name);
+          minus.addEventListener("click", function (e) { e.stopPropagation(); setQty(t.id, l, -1); });
+          plus.addEventListener("click", function (e) { e.stopPropagation(); setQty(t.id, l, 1); });
+          qty.appendChild(minus); qty.appendChild(qv); qty.appendChild(plus);
+          row.appendChild(qty);
+
+          var x = document.createElement("button");
+          x.type = "button";
+          x.className = "icon-btn danger";
+          x.textContent = "✕";
+          x.setAttribute("aria-label", "Remove from card");
+          x.addEventListener("click", function (e) { e.stopPropagation(); removeFromDraft(t.id, l.item_id); });
+          row.appendChild(x);
+
+          row.addEventListener("click", function (e) {
+            if (e.target.closest("button")) return;
+            toggleGrabbed(t.id, l);
+          });
+          row.addEventListener("keydown", function (e) {
+            if ((e.key === "Enter" || e.key === " ") && e.target === row) {
+              e.preventDefault();
+              toggleGrabbed(t.id, l);
+            }
+          });
+        }
+        rowsBox.appendChild(row);
       });
       c.querySelector('[data-act="go"]').addEventListener("click", function () { openCheckout(t); });
       c.querySelector('[data-act="discard"]').addEventListener("click", function () { discardDraft(t); });
@@ -1206,10 +1321,12 @@
         .map(function (l) {
           var it = items.find(function (x) { return x.id === l.item_id; });
           if (!it) return null;
-          if (l.for_person && l.amount) {
-            return it.name + " (" + personName(l.for_person) + " " + fmt(Number(l.amount)) + ")";
+          var label = it.name + ((l.qty || 1) > 1 ? " ×" + l.qty : "");
+          var ppl = linkPeople(l);
+          if (ppl.length && l.amount) {
+            return label + " (" + ppl.map(personName).join(" + ") + " " + fmt(Number(l.amount)) + ")";
           }
-          return it.name;
+          return label;
         }).filter(Boolean);
       var d = document.createElement("div");
       d.className = "trip";
@@ -1341,8 +1458,9 @@
           (bal[p.id] && bal[p.id].personal > 0 ? " · own " + fmt(bal[p.id].personal) : "") + '</span>' +
         '<button class="icon-btn danger" data-act="del" aria-label="Remove person">✕</button>';
       d.querySelector('[data-act="del"]').addEventListener("click", function () {
-        if (trips.some(function (t) { return t.payer === p.id; })) {
-          toast("Has paid runs — can't remove"); return;
+        if (trips.some(function (t) { return t.payer === p.id; }) ||
+            runItems.some(function (l) { return linkPeople(l).indexOf(p.id) !== -1; })) {
+          toast("Used in runs — can't remove"); return;
         }
         people = people.filter(function (x) { return x.id !== p.id; });
         render();
@@ -1409,10 +1527,10 @@
         var it = items.find(function (x) { return x.id === l.item_id; });
         return it ? it.name : null;
       }).filter(Boolean).join("; ");
-      var personal = links.filter(function (l) { return l.for_person && l.amount; })
+      var personal = links.filter(function (l) { return linkPeople(l).length && l.amount; })
         .map(function (l) {
           var it = items.find(function (x) { return x.id === l.item_id; });
-          return (it ? it.name : "?") + "=" + personName(l.for_person) + ":" + Number(l.amount).toFixed(2);
+          return (it ? it.name : "?") + "=" + linkPeople(l).map(personName).join("+") + ":" + Number(l.amount).toFixed(2);
         }).join("; ");
       rows.push([t.day, personName(t.payer), Number(t.total || 0).toFixed(2), t.note || "", names, personal, t.receipt_url || ""]);
     });
