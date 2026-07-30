@@ -432,6 +432,10 @@
     .sheet .row { flex-direction: column; }
     .trip .total { font-size: 0.95rem; }
     .toolbar .btn { flex: 1; }
+    .presence-pop {
+      position: fixed; left: 10px; right: 10px;
+      white-space: normal; max-height: 50vh; overflow-y: auto;
+    }
     .tabs { padding: 2px 8px calc(2px + env(safe-area-inset-bottom)); }
     .tabs button { font-size: 0.66rem; padding: 4px 4px 2px; }
     .tabs button .icon { font-size: 0.95rem; margin-bottom: 0; }
@@ -918,6 +922,13 @@
   }
   document.getElementById("presenceBadge").addEventListener("click", function (e) {
     e.stopPropagation();
+    var pop = document.getElementById("presencePop");
+    if (window.matchMedia("(max-width: 480px)").matches) {
+      var r = e.currentTarget.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + "px";
+    } else {
+      pop.style.top = "";
+    }
     document.getElementById("presenceWrap").classList.toggle("open");
   });
   document.addEventListener("click", function () {
