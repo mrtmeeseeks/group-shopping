@@ -612,7 +612,17 @@
   function doneTrips() { return trips.filter(function (t) { return t.status !== "draft"; }); }
   function openDraftsAll() { return trips.filter(function (t) { return t.status === "draft"; }); }
   function draftsFor(day) { return openDraftsAll().filter(function (t) { return t.day === day; }); }
-  function draftLinks(id) { return runItems.filter(function (l) { return l.trip_id === id; }); }
+  function draftLinks(id) {
+    // stable order: by when the item was added to the pool — rows never jump around on reload
+    return runItems.filter(function (l) { return l.trip_id === id; })
+      .sort(function (a, b) {
+        var ia = items.find(function (x) { return x.id === a.item_id; });
+        var ib = items.find(function (x) { return x.id === b.item_id; });
+        var ka = (ia && ia.created_at ? ia.created_at : "zzz") + a.item_id;
+        var kb = (ib && ib.created_at ? ib.created_at : "zzz") + b.item_id;
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+  }
   function resolveActiveDraft() {
     var ds = draftsFor(selectedDay);
     if (!ds.length) { return null; }
@@ -714,6 +724,7 @@
       reloadTimer = setTimeout(function () { loadAll(); }, 300);
       return Promise.resolve();
     }
+    var seqAtStart = mutSeq;
     return Promise.all([
       sb.from("people").select("*").order("created_at"),
       sb.from("items").select("*").order("created_at"),
@@ -721,6 +732,11 @@
       sb.from("run_items").select("*")
     ]).then(function (res) {
       for (var k = 0; k < 4; k++) { if (res[k].error) throw res[k].error; }
+      if (seqAtStart !== mutSeq || pendingOps > 0) {
+        // something changed locally while this snapshot was in flight — it's stale, refetch
+        scheduleReload();
+        return;
+      }
       people = res[0].data;
       items = res[1].data;
       trips = res[2].data;
@@ -739,6 +755,7 @@
   var badge = document.getElementById("liveBadge");
   var rtOn = false;
   var pendingOps = 0;
+  var mutSeq = 0;   // bumped on every local mutation; stale reload snapshots are discarded
   function setBadge() {
     if (pendingOps > 0) {
       badge.textContent = "saving…";
@@ -749,6 +766,7 @@
     badge.classList.toggle("on", rtOn);
   }
   function track(builder) {
+    mutSeq++;
     pendingOps++; setBadge();
     var p = Promise.resolve(builder);
     var done = function () { pendingOps = Math.max(0, pendingOps - 1); setBadge(); };
