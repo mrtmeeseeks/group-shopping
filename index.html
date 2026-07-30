@@ -400,6 +400,11 @@
   }
   .icon-btn.danger:hover { color: var(--debit); }
   .icon-btn.edit:hover { color: var(--accent); }
+  .armed, .icon-btn.armed, .btn.armed {
+    color: var(--debit) !important;
+    border-color: var(--debit) !important;
+    font-weight: 700;
+  }
 
   .viewer {
     position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 50;
@@ -652,6 +657,27 @@
   function fail(err, what) {
     console.error(what, err);
     toast(what + " failed: " + (err && err.message ? err.message : "network error"));
+  }
+  // two-tap confirm: first tap arms the button (red, relabeled), second tap within 2.5s fires
+  function armConfirm(btn, armedLabel, fn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (btn.dataset.armed === "1") {
+        btn.dataset.armed = "";
+        fn();
+        return;
+      }
+      btn.dataset.armed = "1";
+      var prev = btn.textContent;
+      btn.textContent = armedLabel;
+      btn.classList.add("armed");
+      setTimeout(function () {
+        if (btn.dataset.armed !== "1") return;
+        btn.dataset.armed = "";
+        btn.textContent = prev;
+        btn.classList.remove("armed");
+      }, 2500);
+    });
   }
   function personName(id) {
     var p = people.find(function (x) { return x.id === id; });
@@ -1670,7 +1696,7 @@
         rowsBox.appendChild(row);
       });
       c.querySelector('[data-act="go"]').addEventListener("click", function () { openCheckout(t); });
-      c.querySelector('[data-act="discard"]').addEventListener("click", function () { discardDraft(t); });
+      armConfirm(c.querySelector('[data-act="discard"]'), "Tap again to discard", function () { discardDraft(t); });
       var useBtn = c.querySelector('[data-act="use"]');
       if (useBtn) useBtn.addEventListener("click", function () {
         activeDraftId = t.id;
@@ -1745,7 +1771,7 @@
           viewer.hidden = false;
         });
       }
-      d.querySelector('[data-act="del"]').addEventListener("click", function () { deleteTrip(t); });
+      armConfirm(d.querySelector('[data-act="del"]'), "Tap again to delete", function () { deleteTrip(t); });
       d.querySelector('[data-act="edit"]').addEventListener("click", function () {
         if (names.length) openCheckout(t); else openExpense(t);
       });
@@ -1820,7 +1846,7 @@
         d.appendChild(inp); d.appendChild(ok); d.appendChild(no);
         inp.focus(); inp.select();
       });
-      d.querySelector('[data-act="del"]').addEventListener("click", function () {
+      armConfirm(d.querySelector('[data-act="del"]'), "sure?", function () {
         if (runItems.some(function (l) { return l.item_id === i.id; })) {
           toast("Used in a run — can't remove (edit it instead)"); return;
         }
@@ -1940,7 +1966,7 @@
           '<span class="pname">' + esc(personName(p.from_person)) + " → " + esc(personName(p.to_person)) + '</span>' +
           '<span class="money">' + fmt(Number(p.amount)) + '</span>' +
           '<button class="icon-btn danger" data-act="del" aria-label="Remove payment">✕</button>';
-        d.querySelector('[data-act="del"]').addEventListener("click", function () {
+        armConfirm(d.querySelector('[data-act="del"]'), "sure?", function () {
           payments = payments.filter(function (x) { return x.id !== p.id; });
           render();
           if (isTmp(p.id)) return;
