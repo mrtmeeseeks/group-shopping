@@ -294,6 +294,21 @@
   }
   .viewer img { max-width: 95vw; max-height: 92vh; border-radius: 8px; }
 
+  @media (max-width: 480px) {
+    .wrap { padding-left: 10px; padding-right: 10px; }
+    header { flex-wrap: wrap; }
+    header h1 { font-size: 1.15rem; }
+    .stats { gap: 6px; }
+    .stat { padding: 8px 9px; }
+    .stat .value { font-size: 0.95rem; }
+    .stat .label { font-size: 0.6rem; }
+    .item { padding: 9px 10px; flex-wrap: wrap; }
+    .item .name { min-width: 55%; }
+    .sheet .row { flex-direction: column; }
+    .trip .total { font-size: 0.95rem; }
+    .toolbar .btn { flex: 1; }
+  }
+
   .setup { max-width: 560px; margin: 60px auto; padding: 0 16px; }
   .setup h1 { font-size: 1.2rem; }
   .setup code {
@@ -575,6 +590,11 @@
 
   // ── data ──
   function loadAll(skipSeed) {
+    if (pendingOps > 0) {
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(function () { loadAll(skipSeed); }, 300);
+      return Promise.resolve();
+    }
     return Promise.all([
       sb.from("people").select("*").order("created_at"),
       sb.from("items").select("*").order("created_at", { ascending: false }),
@@ -595,16 +615,36 @@
     reloadTimer = setTimeout(function () { loadAll(); }, 150);
   }
 
+  // ── optimistic-UI plumbing: local change first, sync after, badge shows state ──
   var badge = document.getElementById("liveBadge");
+  var rtOn = false;
+  var pendingOps = 0;
+  function setBadge() {
+    if (pendingOps > 0) {
+      badge.textContent = "saving…";
+      badge.classList.remove("on");
+      return;
+    }
+    badge.textContent = rtOn ? "live" : "offline";
+    badge.classList.toggle("on", rtOn);
+  }
+  function track(builder) {
+    pendingOps++; setBadge();
+    var p = Promise.resolve(builder);
+    var done = function () { pendingOps = Math.max(0, pendingOps - 1); setBadge(); };
+    p.then(done, done);
+    return p;
+  }
+  function tmpId() { return "tmp-" + Math.random().toString(36).slice(2, 10); }
+
   sb.channel("room")
     .on("postgres_changes", { event: "*", schema: "public", table: "items" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "people" }, scheduleReload)
     .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, scheduleReload)
     .subscribe(function (status) {
-      var on = status === "SUBSCRIBED";
-      badge.textContent = on ? "live" : "offline";
-      badge.classList.toggle("on", on);
-      if (on) scheduleReload();
+      rtOn = status === "SUBSCRIBED";
+      setBadge();
+      if (rtOn) scheduleReload();
     });
 
   // ── tabs ──
@@ -635,8 +675,15 @@
     var name = inp.value.trim();
     if (!name) return;
     inp.value = "";
-    sb.from("items").insert({ name: name, day: selectedDay, status: "open" }).then(function (r) {
-      if (r.error) fail(r.error, "Adding item"); else loadAll();
+    var tmp = { id: tmpId(), name: name, day: selectedDay, status: "open", trip_id: null };
+    items.unshift(tmp);
+    render();
+    track(sb.from("items").insert({ name: name, day: selectedDay, status: "open" })).then(function (r) {
+      if (r.error) {
+        items = items.filter(function (x) { return x !== tmp; });
+        render();
+        fail(r.error, "Adding item");
+      } else loadAll();
     });
   });
   document.getElementById("addPersonForm").addEventListener("submit", function (e) {
@@ -648,8 +695,15 @@
       toast("Already in the group"); return;
     }
     inp.value = "";
-    sb.from("people").insert({ name: name }).then(function (r) {
-      if (r.error) fail(r.error, "Adding person"); else loadAll();
+    var tmp = { id: tmpId(), name: name };
+    people.push(tmp);
+    render();
+    track(sb.from("people").insert({ name: name })).then(function (r) {
+      if (r.error) {
+        people = people.filter(function (x) { return x !== tmp; });
+        render();
+        fail(r.error, "Adding person");
+      } else loadAll();
     });
   });
 
@@ -700,9 +754,18 @@
     });
     copyForm.hidden = true;
     if (!toAdd.length) { toast("Nothing new to copy"); return; }
-    sb.from("items").insert(toAdd).then(function (r) {
-      if (r.error) fail(r.error, "Copying");
-      else { toast("Copied " + toAdd.length + " item" + (toAdd.length === 1 ? "" : "s")); loadAll(); }
+    var tmps = toAdd.map(function (a) {
+      return { id: tmpId(), name: a.name, day: a.day, status: "open", trip_id: null };
+    });
+    items = tmps.concat(items);
+    render();
+    toast("Copied " + toAdd.length + " item" + (toAdd.length === 1 ? "" : "s"));
+    track(sb.from("items").insert(toAdd)).then(function (r) {
+      if (r.error) {
+        items = items.filter(function (x) { return tmps.indexOf(x) === -1; });
+        render();
+        fail(r.error, "Copying");
+      } else loadAll();
     });
   });
 
@@ -784,58 +847,77 @@
     var payer = document.getElementById("coPayer").value;
     var total = parseFloat(document.getElementById("coTotal").value);
     if (!payer || isNaN(total)) { toast("Payer and total are required"); return; }
-    var saveBtn = document.getElementById("coSave");
-    saveBtn.disabled = true;
+    var note = document.getElementById("coNote").value.trim();
+    var ids = cartIds().filter(function (id) { return String(id).indexOf("tmp-") !== 0; });
+    var receiptBlob = pendingReceiptBlob;
+    var receiptPreview = pendingReceiptPreview;
+
+    // instant: show the run and tick the items locally, then sync behind the scenes
+    var tmpTrip = {
+      id: tmpId(), day: selectedDay, payer: payer, total: total,
+      note: note, receipt_url: receiptPreview, created_at: new Date().toISOString()
+    };
+    trips.unshift(tmpTrip);
+    cartIds().forEach(function (id) {
+      var it = items.find(function (x) { return x.id === id; });
+      if (it) { it.status = "bought"; it.trip_id = tmpTrip.id; }
+    });
+    cart = {};
+    closeCheckout();
+    render();
+    toast("Run saved: " + fmt(total) + " by " + personName(payer));
 
     var uploadStep = Promise.resolve(null);
-    if (pendingReceiptBlob) {
+    if (receiptBlob) {
       var path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".jpg";
-      uploadStep = sb.storage.from("receipts")
-        .upload(path, pendingReceiptBlob, { contentType: "image/jpeg" })
+      uploadStep = Promise.resolve(sb.storage.from("receipts")
+        .upload(path, receiptBlob, { contentType: "image/jpeg" }))
         .then(function (r) {
           if (r.error) { toast("Receipt upload failed — saving run without it"); return null; }
           return sb.storage.from("receipts").getPublicUrl(path).data.publicUrl;
         });
     }
 
-    uploadStep.then(function (receiptUrl) {
+    track(uploadStep.then(function (receiptUrl) {
       return sb.from("trips").insert({
         day: selectedDay, payer: payer, total: total,
-        note: document.getElementById("coNote").value.trim(),
-        receipt_url: receiptUrl
+        note: note, receipt_url: receiptUrl
       }).select().single();
     }).then(function (r) {
       if (r.error) throw r.error;
-      var ids = cartIds();
-      cart = {};
-      return sb.from("items")
+      if (!ids.length) { loadAll(); return; }
+      return Promise.resolve(sb.from("items")
         .update({ status: "bought", trip_id: r.data.id })
-        .in("id", ids)
+        .in("id", ids))
         .then(function (r2) {
           if (r2.error) throw r2.error;
-          toast("Run saved: " + fmt(total) + " by " + personName(payer));
-          closeCheckout();
           loadAll();
         });
     }).catch(function (err) {
-      saveBtn.disabled = false;
       fail(err, "Saving run");
-    });
+      loadAll();
+    }));
   });
 
   // ── trips ──
   function deleteTrip(t) {
-    sb.from("items").update({ status: "open", trip_id: null }).eq("trip_id", t.id)
+    items.forEach(function (i) {
+      if (i.trip_id === t.id) { i.status = "open"; i.trip_id = null; }
+    });
+    trips = trips.filter(function (x) { return x.id !== t.id; });
+    render();
+    toast("Run removed — items are back on the list");
+    if (String(t.id).indexOf("tmp-") === 0) return;
+    track(Promise.resolve(sb.from("items").update({ status: "open", trip_id: null }).eq("trip_id", t.id))
       .then(function (r) {
         if (r.error) throw r.error;
         return sb.from("trips").delete().eq("id", t.id);
       })
       .then(function (r) {
         if (r.error) throw r.error;
-        toast("Run removed — items are back on the list");
         loadAll();
       })
-      .catch(function (err) { fail(err, "Removing run"); });
+      .catch(function (err) { fail(err, "Removing run"); loadAll(); }));
   }
 
   var viewer = document.getElementById("viewer");
@@ -962,8 +1044,11 @@
       });
       d.querySelector('[data-act="del"]').addEventListener("click", function () {
         delete cart[i.id];
-        sb.from("items").delete().eq("id", i.id).then(function (r) {
-          if (r.error) fail(r.error, "Removing item"); else loadAll();
+        items = items.filter(function (x) { return x.id !== i.id; });
+        render();
+        if (String(i.id).indexOf("tmp-") === 0) return;
+        track(sb.from("items").delete().eq("id", i.id)).then(function (r) {
+          if (r.error) { fail(r.error, "Removing item"); loadAll(); }
         });
       });
       el.appendChild(d);
@@ -987,9 +1072,16 @@
         '<span class="meta">' + (t ? esc(personName(t.payer)) + (t.note ? " · " + esc(t.note) : "") : "") + '</span>' +
         '<button class="btn small ghost" data-act="again" type="button">Buy again</button>';
       d.querySelector('[data-act="again"]').addEventListener("click", function () {
-        sb.from("items").insert({ name: i.name, day: selectedDay, status: "open" }).then(function (r) {
-          if (r.error) fail(r.error, "Re-adding item");
-          else { toast('"' + i.name + '" is back on the list'); loadAll(); }
+        var tmp = { id: tmpId(), name: i.name, day: selectedDay, status: "open", trip_id: null };
+        items.unshift(tmp);
+        render();
+        toast('"' + i.name + '" is back on the list');
+        track(sb.from("items").insert({ name: i.name, day: selectedDay, status: "open" })).then(function (r) {
+          if (r.error) {
+            items = items.filter(function (x) { return x !== tmp; });
+            render();
+            fail(r.error, "Re-adding item");
+          } else loadAll();
         });
       });
       el.appendChild(d);
@@ -1051,8 +1143,11 @@
         ok.addEventListener("click", function () {
           var v = parseFloat(inp.value);
           if (isNaN(v)) { toast("Bad amount"); return; }
-          sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id).then(function (r) {
-            if (r.error) fail(r.error, "Updating run"); else loadAll();
+          t.payer = sel.value; t.total = v;
+          render();
+          if (String(t.id).indexOf("tmp-") === 0) return;
+          track(sb.from("trips").update({ payer: sel.value, total: v }).eq("id", t.id)).then(function (r) {
+            if (r.error) { fail(r.error, "Updating run"); loadAll(); }
           });
         });
         actions.appendChild(sel); actions.appendChild(inp); actions.appendChild(ok);
@@ -1081,8 +1176,11 @@
         if (trips.some(function (t) { return t.payer === p.id; })) {
           toast("Has paid runs — can't remove"); return;
         }
-        sb.from("people").delete().eq("id", p.id).then(function (r) {
-          if (r.error) fail(r.error, "Removing person"); else loadAll();
+        people = people.filter(function (x) { return x.id !== p.id; });
+        render();
+        if (String(p.id).indexOf("tmp-") === 0) return;
+        track(sb.from("people").delete().eq("id", p.id)).then(function (r) {
+          if (r.error) { fail(r.error, "Removing person"); loadAll(); }
         });
       });
       el.appendChild(d);
