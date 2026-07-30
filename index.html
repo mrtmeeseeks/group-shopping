@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <title>Group Shopping</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F4F6F1">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#141915">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shopping">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
@@ -42,10 +51,15 @@
     }
   }
 
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   [hidden] { display: none !important; }
-  html, body { margin: 0; padding: 0; overflow-x: hidden; }
+  html, body {
+    margin: 0; padding: 0; overflow-x: hidden;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+  }
   img { max-width: 100%; }
+  button, .item, .run-row, .day-chip, .pp-row { touch-action: manipulation; }
   body {
     background: var(--ground);
     color: var(--ink);
@@ -53,6 +67,7 @@
     font-size: 15px;
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
+    padding-top: env(safe-area-inset-top);
   }
   .money, .num {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -61,7 +76,12 @@
 
   .wrap { max-width: 680px; margin: 0 auto; padding: 0 14px 130px; }
 
-  header { padding: 22px 2px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  header {
+    position: sticky; top: 0; z-index: 8;
+    background: var(--ground);
+    margin: 0 -14px; padding: 16px 16px 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
   header h1 {
     font-family: "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
     font-size: 1.35rem; font-weight: 700; letter-spacing: 0.01em;
