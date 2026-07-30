@@ -44,7 +44,8 @@
 
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  html, body { margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; }
+  img { max-width: 100%; }
   body {
     background: var(--ground);
     color: var(--ink);
@@ -99,7 +100,7 @@
     font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--ink-soft); margin-bottom: 3px;
   }
-  .stat .value { font-size: 1.15rem; font-weight: 700; }
+  .stat .value { font-size: 1.15rem; font-weight: 700; overflow-wrap: anywhere; }
   .stat .value.pending-c { color: var(--pending); }
 
   .tabs {
@@ -129,9 +130,9 @@
 
   .add-row { display: flex; gap: 8px; margin-bottom: 12px; }
   input, select {
-    font: inherit; color: var(--ink);
+    font: inherit; font-size: 16px; color: var(--ink);
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 9px 10px; min-width: 0;
+    padding: 9px 10px; min-width: 0; max-width: 100%;
   }
   input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .add-row input[type="text"] { flex: 1; }
@@ -156,9 +157,9 @@
     width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
     border: 2px solid var(--line);
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.8rem; color: var(--accent-ink); background: transparent;
+    font-size: 0.8rem; color: var(--ink-soft); background: transparent;
   }
-  .item.selected .check { background: var(--accent); border-color: var(--accent); }
+  .item.selected .check { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .item .name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
   .item .meta { font-size: 0.75rem; color: var(--ink-soft); flex-shrink: 0; }
   .item.done { background: transparent; }
@@ -195,7 +196,7 @@
   .sheet {
     background: var(--ground); width: min(680px, 100vw);
     border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
-    max-height: 85vh; overflow-y: auto;
+    max-height: 85vh; max-height: 88dvh; overflow-y: auto; overflow-x: hidden;
   }
   .sheet h3 {
     font-family: "Avenir Next", "Futura", "Century Gothic", system-ui, sans-serif;
@@ -205,7 +206,8 @@
   .sheet .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
   .sheet .field label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); font-weight: 600; }
   .sheet .row { display: flex; gap: 8px; }
-  .sheet .row > * { flex: 1; }
+  .sheet .row > * { flex: 1; min-width: 0; }
+  .sheet .field input, .sheet .field select { width: 100%; }
   .receipt-drop {
     border: 1px dashed var(--line); border-radius: var(--radius);
     padding: 12px; text-align: center; color: var(--ink-soft); font-size: 0.85rem;
@@ -236,6 +238,13 @@
   }
   .trip .items { font-size: 0.82rem; color: var(--ink-soft); margin-top: 8px; overflow-wrap: anywhere; }
   .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .trip.current { border: 1.5px dashed var(--accent); }
+  .run-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .run-chip {
+    font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+    background: var(--accent-soft); color: var(--accent);
+    border: none; border-radius: 99px; padding: 4px 10px;
+  }
 
   .bal-row {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -355,7 +364,7 @@
       <input type="text" id="newItemName" placeholder="Add item to the pool…" aria-label="New item" required>
       <button class="btn" type="submit">Add</button>
     </form>
-    <p class="note">One shared pool — it never changes when you shop. Tap items to build a run, <strong>Check out</strong> with who paid + receipt total, and the run appears above. Many runs per day is fine.</p>
+    <p class="note">One shared pool — it never changes when you shop. Hit <strong>＋</strong> to put items into the current run (it appears under Runs above), then <strong>Check out run</strong> with who paid + the receipt total. Many runs per day is fine.</p>
     <div class="card-list" id="itemList"></div>
     <div class="toolbar" style="margin-top:14px;">
       <button class="btn ghost small" id="exportCsv" type="button">Download all runs (CSV)</button>
@@ -382,8 +391,8 @@
 
 <div class="cartbar" id="cartBar" hidden>
   <span class="info" id="cartInfo"></span>
-  <button class="clear" id="cartClear" type="button">Clear</button>
-  <button class="go" id="cartGo" type="button">Check out →</button>
+  <button class="clear" id="cartClear" type="button">Discard</button>
+  <button class="go" id="cartGo" type="button">Check out run →</button>
 </div>
 
 <div class="sheet-back" id="sheetBack" hidden>
@@ -482,6 +491,7 @@
   var selectedDay = todayStr();
   if (selectedDay < TRIP_START) selectedDay = TRIP_START;
   if (selectedDay > TRIP_END) selectedDay = TRIP_END;
+  var dayScrollPending = true;
 
   function fmt(n) {
     return currency + " " + (Math.round(n * 100) / 100).toFixed(2);
@@ -853,12 +863,16 @@
       b.textContent = dayLabel(day) + (runs ? " · " + runs + "🧾" : "");
       b.addEventListener("click", function () {
         selectedDay = day;
+        dayScrollPending = true;
         render();
       });
       el.appendChild(b);
     });
-    var active = el.querySelector(".active");
-    if (active && active.scrollIntoView) active.scrollIntoView({ inline: "center", block: "nearest" });
+    if (dayScrollPending) {
+      dayScrollPending = false;
+      var active = el.querySelector(".active");
+      if (active && active.scrollIntoView) active.scrollIntoView({ inline: "center", block: "nearest" });
+    }
   }
 
   function renderCart() {
@@ -867,7 +881,7 @@
     bar.hidden = !n;
     if (n) {
       document.getElementById("cartInfo").textContent =
-        n + " item" + (n === 1 ? "" : "s") + " in the cart";
+        "Run in progress · " + n + " item" + (n === 1 ? "" : "s");
     }
   }
 
@@ -884,7 +898,7 @@
       d.setAttribute("role", "button");
       d.tabIndex = 0;
       d.innerHTML =
-        '<span class="check">' + (cart[i.id] ? "✓" : "") + '</span>' +
+        '<span class="check">' + (cart[i.id] ? "✓" : "＋") + '</span>' +
         '<span class="name">' + esc(i.name) + '</span>' +
         '<button class="icon-btn edit" data-act="edit" aria-label="Edit item">✎</button>' +
         '<button class="icon-btn danger" data-act="del" aria-label="Remove item">✕</button>';
@@ -951,8 +965,45 @@
     document.getElementById("runsHead").textContent = "Runs · " + dayLabel(selectedDay);
     el.innerHTML = "";
     var dt = dayTrips(selectedDay);
-    if (!dt.length) {
-      el.innerHTML = '<div class="empty">No runs on ' + dayLabel(selectedDay) + ' yet — tap items below and check out.</div>';
+
+    // the run being built right now, as a first-class card
+    var ids = cartIds();
+    if (ids.length) {
+      var c = document.createElement("div");
+      c.className = "trip current";
+      c.innerHTML =
+        '<div class="top">' +
+          '<span class="avatar">🛒</span>' +
+          '<div class="who"><div class="payer">New run — in progress</div>' +
+          '<div class="meta">' + ids.length + " item" + (ids.length === 1 ? "" : "s") + " · tap an item to take it out</div></div>" +
+        '</div>' +
+        '<div class="run-chips"></div>' +
+        '<div class="trip-actions">' +
+          '<button class="btn small" data-act="go" type="button">Check out run →</button>' +
+          '<button class="btn ghost small" data-act="discard" type="button">Discard</button>' +
+        '</div>';
+      var chips = c.querySelector(".run-chips");
+      ids.forEach(function (id) {
+        var it = items.find(function (x) { return x.id === id; });
+        if (!it) return;
+        var ch = document.createElement("button");
+        ch.className = "run-chip"; ch.type = "button";
+        ch.textContent = it.name + " ✕";
+        ch.addEventListener("click", function () {
+          delete cart[id];
+          render();
+        });
+        chips.appendChild(ch);
+      });
+      c.querySelector('[data-act="go"]').addEventListener("click", openCheckout);
+      c.querySelector('[data-act="discard"]').addEventListener("click", function () {
+        cart = {}; render();
+      });
+      el.appendChild(c);
+    }
+
+    if (!dt.length && !ids.length) {
+      el.innerHTML = '<div class="empty">No runs on ' + dayLabel(selectedDay) + ' yet — add items to a run below (＋).</div>';
       return;
     }
     dt.forEach(function (t) {
