@@ -474,6 +474,12 @@
     box-shadow: 0 8px 30px rgba(0,0,0,0.3);
   }
   .confirm-box p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
+  .install-steps {
+    margin: 0 0 16px; padding-left: 20px;
+    font-size: 0.86rem; color: var(--ink-soft); line-height: 1.5;
+  }
+  .install-steps li { margin-bottom: 6px; }
+  .install-steps b { color: var(--ink); }
   .confirm-box .actions { display: flex; gap: 8px; }
   .confirm-box .btn { flex: 1; padding: 11px; }
   .btn.danger { background: var(--debit); color: #fff; }
@@ -525,7 +531,7 @@
         <div class="presence-pop" id="presencePop"></div>
       </span>
       <span class="live" id="liveBadge">connecting…</span>
-      <button class="live install" id="installBtn" type="button" hidden>⬇ Install</button>
+      <button class="live install" id="installBtn" type="button" hidden aria-label="Install this app">⬇ Install</button>
       <select class="currency-pick" id="meSel" aria-label="Who are you"></select>
       <select class="currency-pick" id="currencySel" aria-label="Currency">
         <option value="€">EUR €</option>
@@ -638,6 +644,16 @@
   </div>
 </div>
 
+<div class="confirm-back" id="installBack" hidden>
+  <div class="confirm-box" role="dialog" aria-labelledby="installMsg">
+    <p id="installMsg"></p>
+    <ol class="install-steps" id="installSteps"></ol>
+    <div class="actions">
+      <button class="btn ghost" id="installClose" type="button">Got it</button>
+    </div>
+  </div>
+</div>
+
 <nav class="tabs" aria-label="Sections" id="tabBar" hidden>
   <button data-tab="list" class="active"><span class="icon" aria-hidden="true">🛒</span>List</button>
   <button data-tab="people"><span class="icon" aria-hidden="true">👥</span>People</button>
@@ -671,29 +687,105 @@
 
 (function () {
   "use strict";
-  // Chrome/Edge/Android fire this when the app qualifies for installing; Safari never
-  // does (there you use Share → Add to Home Screen), so the button just stays hidden.
+  // Only Chrome/Edge/Android give us a real install prompt (beforeinstallprompt). Safari
+  // has no install API at all — on iOS it's Share → Add to Home Screen, by hand. So the
+  // button is always there, and it either fires the native prompt or explains the manual
+  // route for whatever browser you're actually in.
   var btn = document.getElementById("installBtn");
+  var back = document.getElementById("installBack");
+  var msg = document.getElementById("installMsg");
+  var steps = document.getElementById("installSteps");
+  var closeBtn = document.getElementById("installClose");
+  if (!btn) return;
   var prompt = null;
+
+  function alreadyInstalled() {
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+      window.navigator.standalone === true;
+  }
+  function sync() { btn.hidden = alreadyInstalled(); }
+
+  function howTo() {
+    var ua = navigator.userAgent;
+    // iPadOS reports as a Mac, so touch points are the giveaway
+    var iOS = /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    var android = /Android/.test(ua);
+    var firefox = /Firefox|FxiOS/.test(ua);
+    if (iOS) {
+      return {
+        title: "Add Group Shopping to your Home Screen",
+        steps: [
+          "Tap the <b>Share</b> button — the square with an arrow, at the bottom of Safari (or top-right in Chrome).",
+          "Scroll down and tap <b>Add to Home Screen</b>.",
+          "Tap <b>Add</b>. It opens full-screen, like an app."
+        ]
+      };
+    }
+    if (android) {
+      return {
+        title: "Add Group Shopping to your Home screen",
+        steps: [
+          "Tap the <b>⋮</b> menu, top-right.",
+          "Tap <b>Install app</b> — or <b>Add to Home screen</b>.",
+          "Confirm, and it lands on your Home screen."
+        ]
+      };
+    }
+    if (firefox) {
+      return {
+        title: "Install Group Shopping",
+        steps: [
+          "Firefox on desktop doesn't install web apps.",
+          "Open this page in <b>Chrome</b> or <b>Edge</b> to install it — or just bookmark it here."
+        ]
+      };
+    }
+    return {
+      title: "Install Group Shopping",
+      steps: [
+        "Look for the <b>install icon</b> at the right-hand end of the address bar.",
+        "No icon? Open the <b>⋮</b> menu → <b>Cast, save and share</b> → <b>Install page as app</b>.",
+        "Already installed? Then there's nothing left to do."
+      ]
+    };
+  }
+
+  function openSheet() {
+    var h = howTo();
+    msg.textContent = h.title;
+    steps.innerHTML = h.steps.map(function (s) { return "<li>" + s + "</li>"; }).join("");
+    back.hidden = false;
+  }
+  function closeSheet() { back.hidden = true; }
+  closeBtn.addEventListener("click", closeSheet);
+  back.addEventListener("click", function (e) { if (e.target === back) closeSheet(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !back.hidden) closeSheet();
+  });
+
   window.addEventListener("beforeinstallprompt", function (e) {
     e.preventDefault();
     prompt = e;
-    if (btn) btn.hidden = false;
+    sync();
   });
-  if (btn) btn.addEventListener("click", function () {
-    if (!prompt) return;
-    btn.hidden = true;
-    prompt.prompt();
-    prompt.userChoice.then(function (r) {
-      // dismissed? put the button back so they can try again later
-      if (r && r.outcome !== "accepted") btn.hidden = false;
-      prompt = null;
+  btn.addEventListener("click", function () {
+    if (!prompt) { openSheet(); return; }
+    var p = prompt;
+    prompt = null;
+    p.prompt();
+    p.userChoice.then(function (r) {
+      // dismissed? keep the button around so they can try again
+      if (!r || r.outcome !== "accepted") prompt = p;
+      sync();
     });
   });
   window.addEventListener("appinstalled", function () {
     prompt = null;
-    if (btn) btn.hidden = true;
+    btn.hidden = true;
+    closeSheet();
   });
+  sync();
 })();
 
 (function () {
