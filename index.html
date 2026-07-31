@@ -830,20 +830,32 @@
   // pool rows to show, best match first; unfiltered keeps the stable pool order
   function visibleItems() {
     if (!itemQuery.trim()) {
-      return items.map(function (i) { return { item: i, marks: null, solid: false }; });
+      return sortedItems().map(function (i) { return { item: i, marks: null, solid: false }; });
     }
     var out = [];
     items.forEach(function (i) {
       var m = fuzzyMatch(itemQuery, i.name);
       if (m) out.push({ item: i, marks: m.marks, score: m.score, solid: m.solid });
     });
-    out.sort(function (a, b) { return b.score - a.score; });
+    // best match first; ties broken alphabetically so the order never wobbles
+    out.sort(function (a, b) { return b.score - a.score || byName(a.item, b.item); });
     return out;
   }
   function exactPoolItem(name) {
     var n = norm(name.trim());
     return items.find(function (i) { return norm(i.name) === n; }) || null;
   }
+  // the pool is always A–Z: a row's position then only depends on its name, so nothing
+  // shuffles under your finger when someone else adds an item or a name gets edited.
+  var collator = (function () {
+    try { return new Intl.Collator(undefined, { sensitivity: "base", numeric: true }); }
+    catch (e) { return null; }
+  })();
+  function byName(a, b) {
+    var x = String(a.name || ""), y = String(b.name || "");
+    return collator ? collator.compare(x, y) : (x.toLowerCase() < y.toLowerCase() ? -1 : x.toLowerCase() > y.toLowerCase() ? 1 : 0);
+  }
+  function sortedItems() { return items.slice().sort(byName); }
 
   // ── draft helpers ──
   function doneTrips() { return trips.filter(function (t) { return t.status !== "draft"; }); }
