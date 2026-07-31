@@ -13,7 +13,9 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" type="image/png" href="icon-192.png">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- crossorigin so the response is CORS, not opaque, and the service worker can cache it —
+     without this the app can't boot offline once the browser's HTTP cache expires -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
 <style>
   :root {
     --ground: #F4F6F1;
@@ -91,13 +93,21 @@
     margin: 0; text-wrap: balance;
   }
   header h1 .tick { color: var(--accent); }
-  .head-right { display: flex; align-items: center; gap: 8px; }
+  .head-right {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; min-width: 0;
+  }
   .live {
     font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
-    padding: 3px 9px; border-radius: 99px;
+    padding: 3px 9px; border-radius: 99px; white-space: nowrap;
     background: var(--pending-soft); color: var(--pending);
   }
   .live.on { background: var(--credit-soft); color: var(--credit); }
+  /* only ever shown when the browser actually offers an install prompt */
+  .live.install {
+    border: none; cursor: pointer; font-family: inherit;
+    background: var(--accent); color: var(--accent-ink);
+  }
   .presence-wrap { position: relative; }
   #presenceBadge { border: none; cursor: pointer; font: inherit; font-size: 0.72rem; font-weight: 700; }
   .presence-pop {
@@ -515,6 +525,7 @@
         <div class="presence-pop" id="presencePop"></div>
       </span>
       <span class="live" id="liveBadge">connecting…</span>
+      <button class="live install" id="installBtn" type="button" hidden>⬇ Install</button>
       <select class="currency-pick" id="meSel" aria-label="Who are you"></select>
       <select class="currency-pick" id="currencySel" aria-label="Currency">
         <option value="€">EUR €</option>
@@ -636,6 +647,55 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script>
+// ── PWA plumbing ──
+// Kept outside the app closure so it still runs on the "not configured" screen, and so a
+// failure here can never stop the app from booting.
+(function () {
+  "use strict";
+  if (!("serviceWorker" in navigator)) return;
+  // was a worker already driving this page? if so, a later handover means a new deploy
+  // landed, and the page should pick it up rather than run half-old, half-new
+  var hadController = !!navigator.serviceWorker.controller;
+  var reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", function () {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function (e) {
+      console.warn("Service worker registration failed", e);
+    });
+  });
+})();
+
+(function () {
+  "use strict";
+  // Chrome/Edge/Android fire this when the app qualifies for installing; Safari never
+  // does (there you use Share → Add to Home Screen), so the button just stays hidden.
+  var btn = document.getElementById("installBtn");
+  var prompt = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    prompt = e;
+    if (btn) btn.hidden = false;
+  });
+  if (btn) btn.addEventListener("click", function () {
+    if (!prompt) return;
+    btn.hidden = true;
+    prompt.prompt();
+    prompt.userChoice.then(function (r) {
+      // dismissed? put the button back so they can try again later
+      if (r && r.outcome !== "accepted") btn.hidden = false;
+      prompt = null;
+    });
+  });
+  window.addEventListener("appinstalled", function () {
+    prompt = null;
+    if (btn) btn.hidden = true;
+  });
+})();
+
 (function () {
   "use strict";
 
