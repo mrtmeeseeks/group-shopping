@@ -205,6 +205,38 @@
   .chip.bought { background: var(--credit-soft); color: var(--credit); }
   .chip.incard { background: var(--pending-soft); color: var(--pending); }
 
+  /* the pool's add box doubles as a fuzzy filter — keep it in reach while scrolling */
+  .search-row {
+    position: sticky; top: 0; z-index: 12;
+    background: var(--ground);
+    padding: 8px 0; margin-bottom: 6px;
+  }
+  .search-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+  .search-wrap input[type="text"] { flex: 1; padding-right: 32px; }
+  .search-wrap .clear-x {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; color: var(--ink-soft);
+    font-size: 0.9rem; padding: 4px 6px; line-height: 1; border-radius: 6px;
+  }
+  .search-meta {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 0.75rem; color: var(--ink-soft); margin: 0 2px 8px;
+  }
+
+  /* compact pool rows: a 40-item list has to be scannable, not scrollable forever */
+  #itemList.compact { gap: 4px; }
+  #itemList.compact .item {
+    padding: 6px 10px; gap: 8px; border-radius: 9px; box-shadow: none;
+  }
+  #itemList.compact .item .check {
+    width: 19px; height: 19px; border-width: 1.5px; font-size: 0.72rem;
+  }
+  #itemList.compact .item .name { font-weight: 500; font-size: 0.88rem; }
+  #itemList.compact .item .chip { font-size: 0.62rem; padding: 1px 6px; }
+  #itemList.compact .item .meta { font-size: 0.68rem; }
+  #itemList.compact .icon-btn { font-size: 0.85rem; padding: 2px 4px; }
+  .item .name b.hit { color: var(--accent); font-weight: 800; }
+
   .cartbar {
     position: fixed; left: 50%; transform: translateX(-50%);
     bottom: calc(64px + env(safe-area-inset-bottom));
@@ -312,30 +344,30 @@
   .trip .items { font-size: 0.82rem; color: var(--ink-soft); margin-top: 8px; overflow-wrap: anywhere; }
   .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .trip.current { border: 1.5px dashed var(--accent); }
-  .run-rows { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+  .run-rows { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
   .run-row {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 8px;
     background: var(--ground); border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 10px; cursor: pointer; user-select: none; -webkit-user-select: none;
+    padding: 5px 8px; cursor: pointer; user-select: none; -webkit-user-select: none;
   }
   .run-row .rcheck {
-    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-    border: 2px solid var(--line);
+    width: 19px; height: 19px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid var(--line);
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.75rem; color: transparent;
+    font-size: 0.7rem; color: transparent;
   }
   .run-row.grabbed { background: var(--credit-soft); border-color: transparent; }
   .run-row.grabbed .rcheck { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  .run-row .rname { flex: 1; min-width: 0; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+  .run-row .rname { flex: 1; min-width: 0; font-size: 0.86rem; font-weight: 600; overflow-wrap: anywhere; }
   .run-row.grabbed .rname { color: var(--ink-soft); text-decoration: line-through; }
   .run-row.pending { opacity: 0.65; cursor: default; }
   .run-row .qty { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
   .run-row .qty button {
-    width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line);
-    background: none; color: var(--ink); cursor: pointer; font-size: 0.95rem; line-height: 1;
+    width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line);
+    background: none; color: var(--ink); cursor: pointer; font-size: 0.9rem; line-height: 1;
     padding: 0;
   }
-  .run-row .qty .qv { min-width: 30px; text-align: center; font-weight: 700; font-size: 0.82rem; }
+  .run-row .qty .qv { min-width: 26px; text-align: center; font-weight: 700; font-size: 0.78rem; }
   .progress { height: 4px; border-radius: 2px; background: var(--line); margin-top: 10px; overflow: hidden; }
   .progress span { display: block; height: 100%; background: var(--accent); }
   .spin {
@@ -482,12 +514,17 @@
     <h2 id="runsHead" style="margin-top:6px;">Runs</h2>
     <div class="card-list" id="tripList"></div>
     <h2>Shopping list <span class="count" id="itemCount"></span></h2>
-    <form class="add-row" id="addItemForm">
-      <input type="text" id="newItemName" placeholder="Add item to the pool…" aria-label="New item" required>
-      <button class="btn" type="submit">Add</button>
+    <form class="add-row search-row" id="addItemForm">
+      <span class="search-wrap">
+        <input type="text" id="newItemName" placeholder="Search the pool, or type a new item…"
+               aria-label="Search or add item" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button class="clear-x" id="clearSearch" type="button" hidden aria-label="Clear search">✕</button>
+      </span>
+      <button class="btn" type="submit" id="addItemBtn">Add</button>
     </form>
-    <p class="note">One shared pool — it never changes when you shop. Hit <strong>＋</strong> to put an item on the shared <strong>run card</strong>: everyone sees the card fill up live, and items already on a card are marked so nobody grabs them twice. Check the card out with who paid + the receipt total.</p>
-    <div class="card-list" id="itemList"></div>
+    <div class="search-meta" id="searchMeta" hidden></div>
+    <p class="note" id="poolNote">One shared pool — it never changes when you shop. Hit <strong>＋</strong> to put an item on the shared <strong>run card</strong>: everyone sees the card fill up live, and items already on a card are marked so nobody grabs them twice. Check the card out with who paid + the receipt total.</p>
+    <div class="card-list compact" id="itemList"></div>
     <div class="toolbar" style="margin-top:14px;">
       <button class="btn ghost small" id="exportCsv" type="button">Download all runs (CSV)</button>
     </div>
@@ -654,6 +691,7 @@
   var pendingReceiptPreview = null;
   var checkoutDraftId = null;
   var activeDraftId = null;   // which open card THIS device adds to
+  var itemQuery = "";         // live fuzzy filter over the pool (also the add box)
   var selectedDay = todayStr();
   if (selectedDay < TRIP_START) selectedDay = TRIP_START;
   if (selectedDay > TRIP_END) selectedDay = TRIP_END;
@@ -701,6 +739,78 @@
   }
   function initials(name) {
     return name.trim().split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join("").toUpperCase();
+  }
+
+  // ── fuzzy pool search ──
+  // norm() is deliberately char-by-char so the normalised string stays the same length
+  // as the original — match indexes can then be used to highlight the original text.
+  function norm(s) {
+    var out = "";
+    for (var i = 0; i < s.length; i++) {
+      var c = s[i].toLowerCase().normalize("NFD");
+      out += c[0];
+    }
+    return out;
+  }
+  function isBoundary(t, i) { return i <= 0 || /[\s\-(/,&.+×x]/.test(t[i - 1]); }
+  // one term against one (normalised) name: substring wins, subsequence is the fallback
+  function matchTerm(q, t) {
+    var idx = t.indexOf(q), marks = [], i;
+    if (idx >= 0) {
+      for (i = 0; i < q.length; i++) marks.push(idx + i);
+      return { score: 200 + (isBoundary(t, idx) ? 40 : 0) - idx, marks: marks };
+    }
+    var from = 0, prev = -2, score = 0;
+    for (i = 0; i < q.length; i++) {
+      var f = t.indexOf(q[i], from);
+      if (f < 0) return null;
+      marks.push(f);
+      if (f === prev + 1) score += 6;
+      if (isBoundary(t, f)) score += 10;
+      prev = f; from = f + 1;
+    }
+    return { score: score, marks: marks };
+  }
+  // every whitespace-separated term must hit, in any order ("pea but" finds "Peanut butter")
+  function fuzzyMatch(query, text) {
+    var terms = norm(query).split(/\s+/).filter(Boolean);
+    if (!terms.length) return { score: 0, marks: null };
+    var t = norm(text), marks = [], score = 0;
+    for (var i = 0; i < terms.length; i++) {
+      var r = matchTerm(terms[i], t);
+      if (!r) return null;
+      score += r.score;
+      marks = marks.concat(r.marks);
+    }
+    return { score: score - t.length * 0.2, marks: marks };
+  }
+  function highlight(name, marks) {
+    if (!marks || !marks.length) return esc(name);
+    var on = {}, out = "", open = false;
+    marks.forEach(function (i) { on[i] = true; });
+    for (var i = 0; i < name.length; i++) {
+      if (on[i] && !open) { out += '<b class="hit">'; open = true; }
+      if (!on[i] && open) { out += "</b>"; open = false; }
+      out += esc(name[i]);
+    }
+    return out + (open ? "</b>" : "");
+  }
+  // pool rows to show, best match first; unfiltered keeps the stable pool order
+  function visibleItems() {
+    if (!itemQuery.trim()) {
+      return items.map(function (i) { return { item: i, marks: null }; });
+    }
+    var out = [];
+    items.forEach(function (i) {
+      var m = fuzzyMatch(itemQuery, i.name);
+      if (m) out.push({ item: i, marks: m.marks, score: m.score });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out;
+  }
+  function exactPoolItem(name) {
+    var n = norm(name.trim());
+    return items.find(function (i) { return norm(i.name) === n; }) || null;
   }
 
   // ── draft helpers ──
@@ -976,16 +1086,64 @@
     render();
   });
 
-  // ── add item / person ──
+  // ── search / add item / person ──
+  var itemInput = document.getElementById("newItemName");
+  function setQuery(q) {
+    itemQuery = q;
+    document.getElementById("clearSearch").hidden = !q;
+    document.getElementById("poolNote").hidden = !!q.trim();
+    renderItems();
+    renderSearchMeta();
+  }
+  function clearQuery(focus) {
+    itemInput.value = "";
+    setQuery("");
+    if (focus) itemInput.focus();
+  }
+  function renderSearchMeta() {
+    var q = itemQuery.trim();
+    var meta = document.getElementById("searchMeta");
+    var btn = document.getElementById("addItemBtn");
+    var hit = q ? exactPoolItem(q) : null;
+    var onCard = hit ? itemInDraftMap()[hit.id] : null;
+    btn.textContent = hit ? (onCard ? "On a card" : "Put on card") : "Add";
+    document.getElementById("itemCount").textContent =
+      q ? "(" + visibleItems().length + " of " + items.length + ")" : "(" + items.length + ")";
+    if (!q) { meta.hidden = true; meta.textContent = ""; return; }
+    meta.hidden = false;
+    meta.textContent = !hit
+      ? "Enter adds “" + q + "” to the pool as a new item."
+      : onCard
+        ? "“" + hit.name + "” is already on card " + (draftNumber(onCard) || "?") + "."
+        : "Enter puts “" + hit.name + "” on the run card.";
+  }
+  itemInput.addEventListener("input", function () { setQuery(itemInput.value); });
+  itemInput.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && itemInput.value) { e.preventDefault(); clearQuery(true); }
+  });
+  document.getElementById("clearSearch").addEventListener("click", function () { clearQuery(true); });
+
   document.getElementById("addItemForm").addEventListener("submit", function (e) {
     e.preventDefault();
-    var inp = document.getElementById("newItemName");
+    var inp = itemInput;
     var name = inp.value.trim();
     if (!name) return;
-    if (items.some(function (i) { return i.name.toLowerCase() === name.toLowerCase(); })) {
-      toast("Already on the list"); return;
+    // typing the exact name of something already in the pool means "I want this one".
+    // never a toggle-off here — search+Enter only ever adds, so a stray Enter can't
+    // silently pull an item back off the card.
+    var hit = exactPoolItem(name);
+    if (hit) {
+      var onCard = itemInDraftMap()[hit.id];
+      if (onCard) {
+        var n = draftNumber(onCard);
+        toast(n ? "Already on card " + n : "Already on a card");
+      } else {
+        addItemToDraft(hit);
+      }
+      clearQuery(true);
+      return;
     }
-    inp.value = "";
+    clearQuery(false);
     var tmp = { id: tmpId(), name: name, added_by: me };
     items.push(tmp);
     render();
@@ -1575,6 +1733,7 @@
     renderDays();
     renderTrips();
     renderItems();
+    renderSearchMeta();
     renderPeople();
     renderBalances();
     renderRunBar();
@@ -1820,9 +1979,16 @@
       el.innerHTML = '<div class="empty">The list is empty. Add items above.</div>';
       return;
     }
+    var rows = visibleItems();
+    if (!rows.length) {
+      el.innerHTML = '<div class="empty">Nothing matches “' + esc(itemQuery.trim()) +
+        '”.<br>Hit Enter to add it to the pool.</div>';
+      return;
+    }
     var m = itemInDraftMap();
     var act = resolveActiveDraft();
-    items.forEach(function (i) {
+    rows.forEach(function (row) {
+      var i = row.item;
       var draftId = m[i.id];
       var inActive = !!(draftId && act && draftId === act.id);
       var inOther = !!(draftId && !inActive);
@@ -1833,7 +1999,7 @@
       var otherNum = inOther ? draftNumber(draftId) : 0;
       d.innerHTML =
         '<span class="check">' + (inActive ? "✓" : "＋") + '</span>' +
-        '<span class="name">' + esc(i.name) + '</span>' +
+        '<span class="name">' + highlight(i.name, row.marks) + '</span>' +
         (i.added_by ? '<span class="meta">' + esc(initials(personName(i.added_by))) + '</span>' : "") +
         (inActive ? '<span class="chip bought">on this card</span>' : "") +
         (inOther ? '<span class="chip incard">on card ' + (otherNum || "?") + '</span>' : "") +
