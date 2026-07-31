@@ -79,7 +79,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .wrap { max-width: 680px; margin: 0 auto; padding: 0 14px 130px; }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 0 14px 90px; }
 
   header {
     padding: 18px 2px 12px;
@@ -205,12 +205,18 @@
   .chip.bought { background: var(--credit-soft); color: var(--credit); }
   .chip.incard { background: var(--pending-soft); color: var(--pending); }
 
-  /* the pool's add box doubles as a fuzzy filter — keep it in reach while scrolling */
-  .search-row {
-    position: sticky; top: 0; z-index: 12;
+  /* one box at the top of the tab does everything: filter the pool, add a new item,
+     drop either straight onto the open run card. Sticky so it never scrolls away. */
+  .addbar {
+    position: sticky; top: 0; z-index: 14;
     background: var(--ground);
-    padding: 8px 0; margin-bottom: 6px;
+    padding: 8px 0 6px; margin-bottom: 4px;
   }
+  .addbar::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -10px; height: 10px;
+    background: linear-gradient(var(--ground), transparent); pointer-events: none;
+  }
+  .search-row { margin-bottom: 0; }
   .search-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
   .search-wrap input[type="text"] { flex: 1; padding-right: 32px; }
   .search-wrap .clear-x {
@@ -220,8 +226,34 @@
   }
   .search-meta {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    font-size: 0.75rem; color: var(--ink-soft); margin: 0 2px 8px;
+    font-size: 0.75rem; color: var(--ink-soft); margin: 6px 2px 0;
   }
+
+  /* results land right under the box, so you never scroll away to find the match */
+  .results {
+    margin-top: 6px; max-height: 46vh; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    display: flex; flex-direction: column;
+  }
+  .res {
+    display: flex; align-items: center; gap: 8px; text-align: left;
+    font: inherit; color: var(--ink); background: none; border: none;
+    border-bottom: 1px solid var(--line); padding: 9px 11px; cursor: pointer;
+  }
+  .res:last-child { border-bottom: none; }
+  .res.on { background: var(--accent-soft); }
+  .res .rn { flex: 1; min-width: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+  .res .rn b.hit { color: var(--accent); font-weight: 800; }
+  .res .plus {
+    width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+    border: 1.5px solid var(--line); color: var(--ink-soft);
+    display: flex; align-items: center; justify-content: center; font-size: 0.72rem;
+  }
+  .res.new .plus { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .res .tag { font-size: 0.66rem; font-weight: 700; color: var(--ink-soft); flex-shrink: 0; }
+  .res.here .plus { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .res.here .tag { color: var(--accent); }
 
   /* compact pool rows: a 40-item list has to be scannable, not scrollable forever */
   #itemList.compact { gap: 4px; }
@@ -236,23 +268,6 @@
   #itemList.compact .item .meta { font-size: 0.68rem; }
   #itemList.compact .icon-btn { font-size: 0.85rem; padding: 2px 4px; }
   .item .name b.hit { color: var(--accent); font-weight: 800; }
-
-  .cartbar {
-    position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: calc(64px + env(safe-area-inset-bottom));
-    width: min(652px, calc(100vw - 28px));
-    background: var(--ink); color: var(--ground);
-    border-radius: 12px; padding: 10px 14px;
-    display: flex; align-items: center; gap: 10px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    z-index: 15;
-  }
-  .cartbar .info { flex: 1; font-size: 0.85rem; font-weight: 600; }
-  .cartbar button {
-    font: inherit; font-weight: 700; cursor: pointer; border: none; border-radius: 8px;
-    padding: 8px 14px;
-  }
-  .cartbar .go { background: var(--accent); color: var(--accent-ink); }
 
   .sheet-back {
     position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 30;
@@ -344,6 +359,15 @@
   .trip .items { font-size: 0.82rem; color: var(--ink-soft); margin-top: 8px; overflow-wrap: anywhere; }
   .trip .trip-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .trip.current { border: 1.5px dashed var(--accent); }
+  /* an open card with 20+ rows buries everything else — let it fold away while you add */
+  .trip .fold {
+    background: none; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+    color: var(--ink-soft); font-size: 0.8rem; line-height: 1; flex-shrink: 0;
+    padding: 6px 8px; align-self: flex-start;
+  }
+  /* fold hides the rows, never the actions — check out stays one tap away */
+  .trip.folded .run-rows { display: none; }
+  .trip.folded .progress { margin-top: 12px; }
   .run-rows { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
   .run-row {
     display: flex; align-items: center; gap: 8px;
@@ -417,7 +441,7 @@
 
   .toast {
     position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 120px; background: var(--ink); color: var(--ground);
+    bottom: 86px; background: var(--ink); color: var(--ground);
     padding: 8px 16px; border-radius: 99px; font-size: 0.82rem; font-weight: 600;
     opacity: 0; transition: opacity 0.25s; pointer-events: none; z-index: 40;
   }
@@ -469,7 +493,6 @@
     .tabs { padding: 2px 8px calc(2px + env(safe-area-inset-bottom)); }
     .tabs button { font-size: 0.66rem; padding: 4px 4px 2px; }
     .tabs button .icon { font-size: 0.95rem; margin-bottom: 0; }
-    .cartbar { bottom: calc(50px + env(safe-area-inset-bottom)); padding: 8px 12px; }
   }
 
   .setup { max-width: 560px; margin: 60px auto; padding: 0 16px; }
@@ -511,19 +534,22 @@
 
   <section id="tab-list">
     <div class="day-strip" id="dayStrip"></div>
+    <div class="addbar" id="addBar">
+      <form class="add-row search-row" id="addItemForm">
+        <span class="search-wrap">
+          <input type="text" id="newItemName" placeholder="Search or add an item…"
+                 aria-label="Search or add item" autocomplete="off" autocorrect="off" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-controls="searchResults">
+          <button class="clear-x" id="clearSearch" type="button" hidden aria-label="Clear search">✕</button>
+        </span>
+        <button class="btn" type="submit" id="addItemBtn">Add</button>
+      </form>
+      <div class="search-meta" id="searchMeta" hidden></div>
+      <div class="results" id="searchResults" role="listbox" hidden></div>
+    </div>
     <h2 id="runsHead" style="margin-top:6px;">Runs</h2>
     <div class="card-list" id="tripList"></div>
     <h2>Shopping list <span class="count" id="itemCount"></span></h2>
-    <form class="add-row search-row" id="addItemForm">
-      <span class="search-wrap">
-        <input type="text" id="newItemName" placeholder="Search the pool, or type a new item…"
-               aria-label="Search or add item" autocomplete="off" autocorrect="off" spellcheck="false">
-        <button class="clear-x" id="clearSearch" type="button" hidden aria-label="Clear search">✕</button>
-      </span>
-      <button class="btn" type="submit" id="addItemBtn">Add</button>
-    </form>
-    <div class="search-meta" id="searchMeta" hidden></div>
-    <p class="note" id="poolNote">One shared pool — it never changes when you shop. Hit <strong>＋</strong> to put an item on the shared <strong>run card</strong>: everyone sees the card fill up live, and items already on a card are marked so nobody grabs them twice. Check the card out with who paid + the receipt total.</p>
     <div class="card-list compact" id="itemList"></div>
     <div class="toolbar" style="margin-top:14px;">
       <button class="btn ghost small" id="exportCsv" type="button">Download all runs (CSV)</button>
@@ -546,11 +572,6 @@
     <h2>Settle up</h2>
     <div class="card-list" id="settleList"></div>
   </section>
-</div>
-
-<div class="cartbar" id="cartBar" hidden>
-  <span class="info" id="cartInfo"></span>
-  <button class="go" id="cartGo" type="button">Check out run →</button>
 </div>
 
 <div class="sheet-back" id="sheetBack" hidden>
@@ -692,6 +713,14 @@
   var checkoutDraftId = null;
   var activeDraftId = null;   // which open card THIS device adds to
   var itemQuery = "";         // live fuzzy filter over the pool (also the add box)
+  // which run cards this device has folded shut — per device, survives reloads
+  var foldedCards = (function () {
+    try { return JSON.parse(localStorage.getItem("gs-folded") || "{}") || {}; }
+    catch (e) { return {}; }
+  })();
+  function saveFolded() {
+    try { localStorage.setItem("gs-folded", JSON.stringify(foldedCards)); } catch (e) {}
+  }
   var selectedDay = todayStr();
   if (selectedDay < TRIP_START) selectedDay = TRIP_START;
   if (selectedDay > TRIP_END) selectedDay = TRIP_END;
@@ -771,18 +800,21 @@
     }
     return { score: score, marks: marks };
   }
-  // every whitespace-separated term must hit, in any order ("pea but" finds "Peanut butter")
+  // every whitespace-separated term must hit, in any order ("pea but" finds "Peanut butter").
+  // solid = every term was a literal substring, not just scattered letters — that's the bar
+  // for letting Enter pick an existing item instead of creating what you typed.
   function fuzzyMatch(query, text) {
     var terms = norm(query).split(/\s+/).filter(Boolean);
-    if (!terms.length) return { score: 0, marks: null };
-    var t = norm(text), marks = [], score = 0;
+    if (!terms.length) return { score: 0, marks: null, solid: false };
+    var t = norm(text), marks = [], score = 0, solid = true;
     for (var i = 0; i < terms.length; i++) {
       var r = matchTerm(terms[i], t);
       if (!r) return null;
+      if (r.score < 200) solid = false;
       score += r.score;
       marks = marks.concat(r.marks);
     }
-    return { score: score - t.length * 0.2, marks: marks };
+    return { score: score - t.length * 0.2, marks: marks, solid: solid };
   }
   function highlight(name, marks) {
     if (!marks || !marks.length) return esc(name);
@@ -798,12 +830,12 @@
   // pool rows to show, best match first; unfiltered keeps the stable pool order
   function visibleItems() {
     if (!itemQuery.trim()) {
-      return items.map(function (i) { return { item: i, marks: null }; });
+      return items.map(function (i) { return { item: i, marks: null, solid: false }; });
     }
     var out = [];
     items.forEach(function (i) {
       var m = fuzzyMatch(itemQuery, i.name);
-      if (m) out.push({ item: i, marks: m.marks, score: m.score });
+      if (m) out.push({ item: i, marks: m.marks, score: m.score, solid: m.solid });
     });
     out.sort(function (a, b) { return b.score - a.score; });
     return out;
@@ -1086,74 +1118,179 @@
     render();
   });
 
-  // ── search / add item / person ──
+  // ── search / add item ──
+  // One box drives the whole tab: it filters the pool, creates new items, and — when a
+  // run card is open — drops whatever you pick straight onto that card. Results appear
+  // right under the box so you never scroll off to hunt for the row you just typed.
   var itemInput = document.getElementById("newItemName");
-  function setQuery(q) {
+  var resultsEl = document.getElementById("searchResults");
+  var resCursor = 0;      // keyboard-highlighted result
+  var resOpen = true;     // dropdown visibility — tapping elsewhere tucks it away
+
+  function setQuery(q, keepCursor) {
     itemQuery = q;
+    if (!keepCursor) resCursor = 0;
     document.getElementById("clearSearch").hidden = !q;
-    document.getElementById("poolNote").hidden = !!q.trim();
     renderItems();
     renderSearchMeta();
+    renderResults();
   }
   function clearQuery(focus) {
     itemInput.value = "";
     setQuery("");
     if (focus) itemInput.focus();
   }
+  // where a pick lands: the open card for the selected day, or nowhere (pool only)
+  function targetCard() { return resolveActiveDraft(); }
+  function cardWord() {
+    var c = targetCard();
+    if (!c) return "";
+    var n = draftNumber(c.id);
+    return n ? "card " + n : "the card";
+  }
+
+  // the pickable rows: matching pool items, plus a "create it" row when nothing matches exactly
+  function searchEntries() {
+    var q = itemQuery.trim();
+    if (!q) return [];
+    var m = itemInDraftMap();
+    var top = visibleItems().slice(0, 8);
+    var list = top.map(function (r) {
+      return { kind: "item", item: r.item, marks: r.marks, card: m[r.item.id] || null };
+    });
+    if (!exactPoolItem(q)) {
+      // Enter goes to whatever is first. Only let an existing item claim that slot when
+      // what you typed literally appears in its name — otherwise "Add <what I typed>"
+      // wins, so a half-typed new item never silently turns into some other product.
+      if (top.some(function (r) { return r.solid; })) list.push({ kind: "new", name: q });
+      else list.unshift({ kind: "new", name: q });
+    }
+    return list;
+  }
+
+  function renderResults() {
+    var entries = searchEntries();
+    var show = entries.length && resOpen;
+    resultsEl.innerHTML = "";
+    resultsEl.hidden = !show;
+    itemInput.setAttribute("aria-expanded", show ? "true" : "false");
+    if (!show) return;
+    if (resCursor >= entries.length) resCursor = entries.length - 1;
+    var card = cardWord();
+    entries.forEach(function (en, idx) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      var here = en.kind === "item" && en.card;
+      b.className = "res" + (idx === resCursor ? " on" : "") +
+        (en.kind === "new" ? " new" : "") + (here ? " here" : "");
+      var tag = "";
+      if (here) {
+        var n = draftNumber(en.card);
+        tag = n ? "on card " + n : "on a card";
+      } else if (en.kind === "new") {
+        tag = card ? "new → " + card : "new item";
+      }
+      b.innerHTML =
+        '<span class="plus">' + (here ? "✓" : "＋") + '</span>' +
+        '<span class="rn">' +
+          (en.kind === "new" ? "Add “" + esc(en.name) + "”" : highlight(en.item.name, en.marks)) +
+        '</span>' +
+        (tag ? '<span class="tag">' + esc(tag) + '</span>' : "");
+      // mousedown, not click: the input keeps focus so you can add several in a row
+      b.addEventListener("mousedown", function (e) { e.preventDefault(); });
+      b.addEventListener("click", function () { commitEntry(en); });
+      resultsEl.appendChild(b);
+    });
+  }
+
   function renderSearchMeta() {
     var q = itemQuery.trim();
     var meta = document.getElementById("searchMeta");
     var btn = document.getElementById("addItemBtn");
-    var hit = q ? exactPoolItem(q) : null;
-    var onCard = hit ? itemInDraftMap()[hit.id] : null;
-    btn.textContent = hit ? (onCard ? "On a card" : "Put on card") : "Add";
+    var card = cardWord();
+    btn.textContent = card ? "Add →" : "Add";
+    itemInput.placeholder = card ? "Search or add — goes on " + card + "…" : "Search or add an item…";
     document.getElementById("itemCount").textContent =
       q ? "(" + visibleItems().length + " of " + items.length + ")" : "(" + items.length + ")";
     if (!q) { meta.hidden = true; meta.textContent = ""; return; }
     meta.hidden = false;
-    meta.textContent = !hit
-      ? "Enter adds “" + q + "” to the pool as a new item."
-      : onCard
-        ? "“" + hit.name + "” is already on card " + (draftNumber(onCard) || "?") + "."
-        : "Enter puts “" + hit.name + "” on the run card.";
+    meta.textContent = card
+      ? "Enter takes the highlighted row onto " + card + "."
+      : "Enter adds to the list — no run card is open yet.";
   }
-  itemInput.addEventListener("input", function () { setQuery(itemInput.value); });
+
+  // pick a result: existing item → onto the card; new name → create it, then onto the card
+  function commitEntry(en) {
+    if (!en) return;
+    if (en.kind === "new") {
+      createPoolItem(en.name, !!targetCard());
+      clearQuery(true);
+      return;
+    }
+    if (en.card) {
+      var n = draftNumber(en.card);
+      toast(n ? "Already on card " + n : "Already on a card");
+    } else if (targetCard()) {
+      addItemToDraft(en.item);          // safe: we just checked it isn't on a card
+      toast(en.item.name + " → " + cardWord());
+    } else {
+      addItemToDraft(en.item);          // no open card: this opens one
+    }
+    clearQuery(true);
+  }
+
+  function createPoolItem(name, alsoCard) {
+    var tmp = { id: tmpId(), name: name, added_by: me };
+    items.push(tmp);
+    render();
+    // .select() so we get the real id back and can link it to the card straight away
+    track(sb.from("items")
+      .insert({ name: name, day: todayStr(), status: "open", added_by: me })
+      .select()).then(function (r) {
+      var row = r.data && r.data[0];
+      if (r.error || !row) {
+        items = items.filter(function (x) { return x !== tmp; });
+        render();
+        fail(r.error || { message: "no row returned" }, "Adding item");
+        return;
+      }
+      var at = items.indexOf(tmp);
+      if (at >= 0) items[at] = row; else items.push(row);
+      if (alsoCard) { addItemToDraft(row); toast(name + " → " + cardWord()); }
+      else { toast("“" + name + "” added to the list"); }
+      render();
+      loadAll();
+    });
+  }
+
+  itemInput.addEventListener("input", function () { resOpen = true; setQuery(itemInput.value); });
+  itemInput.addEventListener("focus", function () { resOpen = true; renderResults(); });
+  // tap anywhere outside the box and the results tuck away — the query stays, so the
+  // filtered pool below is still there when you want to keep browsing
+  document.addEventListener("click", function (e) {
+    if (!resOpen) return;
+    if (e.target.closest && e.target.closest("#addBar")) return;
+    resOpen = false;
+    renderResults();
+  });
   itemInput.addEventListener("keydown", function (e) {
+    var entries = searchEntries();
+    if (e.key === "ArrowDown" && entries.length) {
+      e.preventDefault(); resCursor = (resCursor + 1) % entries.length; renderResults(); return;
+    }
+    if (e.key === "ArrowUp" && entries.length) {
+      e.preventDefault(); resCursor = (resCursor - 1 + entries.length) % entries.length; renderResults(); return;
+    }
     if (e.key === "Escape" && itemInput.value) { e.preventDefault(); clearQuery(true); }
   });
   document.getElementById("clearSearch").addEventListener("click", function () { clearQuery(true); });
 
   document.getElementById("addItemForm").addEventListener("submit", function (e) {
     e.preventDefault();
-    var inp = itemInput;
-    var name = inp.value.trim();
-    if (!name) return;
-    // typing the exact name of something already in the pool means "I want this one".
-    // never a toggle-off here — search+Enter only ever adds, so a stray Enter can't
-    // silently pull an item back off the card.
-    var hit = exactPoolItem(name);
-    if (hit) {
-      var onCard = itemInDraftMap()[hit.id];
-      if (onCard) {
-        var n = draftNumber(onCard);
-        toast(n ? "Already on card " + n : "Already on a card");
-      } else {
-        addItemToDraft(hit);
-      }
-      clearQuery(true);
-      return;
-    }
-    clearQuery(false);
-    var tmp = { id: tmpId(), name: name, added_by: me };
-    items.push(tmp);
-    render();
-    track(sb.from("items").insert({ name: name, day: todayStr(), status: "open", added_by: me })).then(function (r) {
-      if (r.error) {
-        items = items.filter(function (x) { return x !== tmp; });
-        render();
-        fail(r.error, "Adding item");
-      } else loadAll();
-    });
+    if (!itemInput.value.trim()) return;
+    var entries = searchEntries();
+    commitEntry(entries[resCursor] || entries[0]);
   });
   document.getElementById("addPersonForm").addEventListener("submit", function (e) {
     e.preventDefault();
@@ -1232,11 +1369,6 @@
   var sheetBack = document.getElementById("sheetBack");
   var receiptDrop = document.getElementById("receiptDrop");
   var receiptInput = document.getElementById("coReceipt");
-
-  document.getElementById("cartGo").addEventListener("click", function () {
-    var d = resolveActiveDraft();
-    if (d) openCheckout(d);
-  });
 
   var coMode = "run";
   var coForSelected = {};
@@ -1734,9 +1866,9 @@
     renderTrips();
     renderItems();
     renderSearchMeta();
+    renderResults();
     renderPeople();
     renderBalances();
-    renderRunBar();
   }
 
   function renderDays() {
@@ -1764,17 +1896,6 @@
     }
   }
 
-  function renderRunBar() {
-    var bar = document.getElementById("cartBar");
-    var d = resolveActiveDraft();
-    var n = d ? draftLinks(d.id).length : 0;
-    bar.hidden = !n;
-    if (n) {
-      document.getElementById("cartInfo").textContent =
-        "Run card · " + n + " item" + (n === 1 ? "" : "s");
-    }
-  }
-
   function renderTrips() {
     var el = document.getElementById("tripList");
     document.getElementById("runsHead").textContent = "Runs · " + dayLabel(selectedDay);
@@ -1785,8 +1906,9 @@
     ds.forEach(function (t) {
       var links = draftLinks(t.id);
       var isActive = act && t.id === act.id;
+      var folded = !!foldedCards[t.id];
       var c = document.createElement("div");
-      c.className = "trip current";
+      c.className = "trip current" + (folded ? " folded" : "");
       c.innerHTML =
         '<div class="top">' +
           '<span class="avatar">🛒</span>' +
@@ -1801,6 +1923,8 @@
             })() +
             (t.pending ? " · opening…" : (t.created_at ? " · started " + timeLabel(t.created_at) : "")) +
             "</div></div>" +
+          '<button class="fold" data-act="fold" type="button" aria-expanded="' + (folded ? "false" : "true") + '">' +
+            (folded ? "Show ▾" : "Hide ▴") + '</button>' +
         '</div>' +
         '<div class="run-rows"></div>' +
         (links.length ? '<div class="progress"><span style="width:' +
@@ -1816,7 +1940,7 @@
         var hint = document.createElement("span");
         hint.className = "note";
         hint.style.margin = "0";
-        hint.textContent = "Empty — hit ＋ on items below.";
+        hint.textContent = "Empty — use the box at the top to add items.";
         rowsBox.appendChild(hint);
       }
       links.forEach(function (l) {
@@ -1887,6 +2011,11 @@
           });
         }
         rowsBox.appendChild(row);
+      });
+      c.querySelector('[data-act="fold"]').addEventListener("click", function () {
+        if (foldedCards[t.id]) delete foldedCards[t.id]; else foldedCards[t.id] = true;
+        saveFolded();
+        renderTrips();
       });
       c.querySelector('[data-act="go"]').addEventListener("click", function () { openCheckout(t); });
       armConfirm(c.querySelector('[data-act="discard"]'), "Discard this run card? The items just go back to the pool.", function () { discardDraft(t); });
